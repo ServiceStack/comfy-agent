@@ -1,0 +1,5 @@
+marshmallow
+servicestack
+onnxruntime
+ultralytics
+supervision
