@@ -1014,13 +1014,13 @@ def start():
         return
 
     if not config_str("url"):
-        _log("No URL configured. Please configure in the ComfyGatewayAgentNode.")
+        _log("No URL configured. Please configure in the ComfyAgentNode.")
         return
     if not config_str("apikey"):
-        _log("No API key configured. Please configure in the ComfyGatewayAgentNode.")
+        _log("No API key configured. Please configure in the ComfyAgentNode.")
         return
     if not is_enabled():
-        _log("Autostart is disabled. Enable in the ComfyGatewayAgentNode.")
+        _log("Autostart is disabled. Enable in the ComfyAgentNode.")
         return
 
     g_running = True
@@ -1061,8 +1061,8 @@ def update_agent(config):
         start()
 
 # --- ComfyUI Node Definition ---
-class ComfyGatewayAgentNode:
-    NODE_NAME = "ComfyGatewayAgentNode"
+class ComfyAgentNode:
+    NODE_NAME = "ComfyAgentNode"
     RETURN_TYPES = ()
     RETURN_NAMES = ()
     FUNCTION = "updated"
@@ -1108,10 +1108,10 @@ class ComfyGatewayAgentNode:
 
 # --- ComfyUI Registration ---
 NODE_CLASS_MAPPINGS = {
-    ComfyGatewayAgentNode.NODE_NAME: ComfyGatewayAgentNode
+    ComfyAgentNode.NODE_NAME: ComfyAgentNode
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
-    ComfyGatewayAgentNode.NODE_NAME: "Comfy Gateway Agent (Global)"
+    ComfyAgentNode.NODE_NAME: "Comfy Gateway Agent (Global)"
 }
 
 # --- Autostart Logic ---
