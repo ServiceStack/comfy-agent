@@ -1111,7 +1111,7 @@ NODE_CLASS_MAPPINGS = {
     ComfyAgentNode.NODE_NAME: ComfyAgentNode
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
-    ComfyAgentNode.NODE_NAME: "Comfy Gateway Agent (Global)"
+    ComfyAgentNode.NODE_NAME: "Comfy Agent (Global)"
 }
 
 # --- Autostart Logic ---
@@ -1121,14 +1121,15 @@ PromptServer.instance.add_on_prompt_handler(on_prompt_handler)
 
 # Check COMFY_GATEWAY environment variable for BASE_URL and BEARER_TOKEN configuration:
 # BEARER_TOKEN@BASE_URL
-if "COMFY_GATEWAY" in os.environ:
-    if "@" in os.environ['COMFY_GATEWAY']:
-        bearer_token, base_url = os.environ['COMFY_GATEWAY'].split("@")
+COMFY_GATEWAY = os.environ.get('COMFY_GATEWAY')
+if COMFY_GATEWAY:
+    if "@" in COMFY_GATEWAY:
+        bearer_token, base_url = COMFY_GATEWAY.split("@")
         save_config({
             "url": base_url,
             "apikey": bearer_token,
         })
     else:
-        _log(f"Warning: COMFY_GATEWAY environment variable is not in the correct format. Expected 'BEARER_TOKEN@BASE_URL', got '{os.environ['COMFY_GATEWAY']}'.")
+        _log(f"Warning: COMFY_GATEWAY environment variable is not in the correct format. Expected 'BEARER_TOKEN@BASE_URL', got '{COMFY_GATEWAY}'.")
 
 start()
