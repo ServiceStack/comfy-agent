@@ -19,8 +19,7 @@ import traceback
 import base64
 
 from server import PromptServer
-from folder_paths import get_user_directory, get_directory_by_type, models_dir, folder_names_and_paths
-from comfyui_version import __version__
+from folder_paths import base_path, get_user_directory, get_directory_by_type, models_dir, folder_names_and_paths
 
 from .dtos import (
     RegisterComfyAgent, GetComfyAgentEvents, UpdateComfyAgent, UpdateComfyAgentStatus, UpdateWorkflowGeneration, GpuInfo, 
@@ -83,6 +82,13 @@ def is_enabled():
 
 def config_str(name:str):
     return name in g_config and g_config[name] or ""
+
+def get_comfyui_version():
+    # comfyui_version.py is a generated file that's sometimes not available
+    if os.path.exists(os.path.join(base_path, "comfyui_version.py")):
+        from comfyui_version import __version__
+        return __version__
+    return "unknown"
 
 # Store the original method
 original_send_sync = PromptServer.send_sync
@@ -726,6 +732,7 @@ def register_agent():
         request=RegisterComfyAgent(
             device_id=DEVICE_ID,
             version=VERSION,
+            comfy_version=get_comfyui_version(),
             workflows=workflows,
             gpus=gpu_infos(),
             queue_count=get_queue_count(),
@@ -1034,7 +1041,7 @@ def start():
     PromptServer.send_sync = intercepted_send_sync
 
     try:
-        g_headers["User-Agent"] = g_headers_json["User-Agent"] = f"comfy-ffmpeg/{DEVICE_ID}/{__version__}"
+        g_headers["User-Agent"] = g_headers_json["User-Agent"] = f"comfy-agent/{get_comfyui_version()}/{VERSION}/{DEVICE_ID}"
 
         g_installed_pip_packages = load_installed_items("requirements.txt")
         g_installed_custom_nodes = load_installed_items("require-nodes.txt")
@@ -1067,7 +1074,7 @@ class ComfyAgentNode:
     RETURN_NAMES = ()
     FUNCTION = "updated"
     OUTPUT_NODE = True
-    CATEGORY = "ComfyGateway"
+    CATEGORY = "comfy_agent"
 
     @classmethod
     def INPUT_TYPES(cls):
