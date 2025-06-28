@@ -26,7 +26,7 @@ from .dtos import (
     CaptionArtifact, CompleteOllamaGenerateTask, GetOllamaGenerateTask
 )
 from servicestack.clients import UploadFile
-from servicestack import JsonServiceClient, printdump, WebServiceException, ResponseStatus
+from servicestack import JsonServiceClient, printdump, WebServiceException, ResponseStatus, from_json, EmptyResponse
 
 from PIL import Image, ImageOps
 from PIL.PngImagePlugin import PngInfo
@@ -75,6 +75,19 @@ def create_client():
 def _log(message):
     """Helper method for logging from the global polling task."""
     print(f"{g_logger_prefix} {message}")
+
+def _log_error(message, e,):
+    """Helper method for logging errors from the global polling task."""
+    status = None
+    if isinstance(e, requests.exceptions.HTTPError):
+        dto = from_json(EmptyResponse, e.response.text)
+        status = dto.response_status
+    if isinstance(e, WebServiceException):
+        status = e.response_status
+    if status is not None:
+        print(f"{g_logger_prefix} {message}{status.error_code} {status.message}")
+    else:
+        print(f"{g_logger_prefix} {message}{type(e)} {e}")
 
 def is_enabled():
     global g_config
@@ -292,7 +305,7 @@ def listen_to_messages_poll():
     try:
         register_agent()
     except Exception as ex:
-        _log(f"Error registering agent: {ex}")
+        _log_error("Error registering agent: ", ex)
         g_running = False
         return
 
@@ -381,7 +394,7 @@ def send_update(sleep=0.1):
         else:
             _log(f"Error sending update: {ex.message}\n{printdump(status)}")
     except Exception as e:
-        _log(f"Error sending update: {e}")
+        _log_error("Error sending update: ", e)
 
 def resolve_url(url):
     #if relative path, combine with BASE_URL
@@ -461,7 +474,7 @@ def url_to_image(url):
         _log(f"Error downloading image: {e}")
         return None
     except Exception as e:
-        _log(f"Error opening image: {e}")
+        _log_error("Error opening image: ", e)
         return None
 
 def url_to_bytes(url):
@@ -474,7 +487,7 @@ def url_to_bytes(url):
         _log(f"Error downloading image: {e}")
         return None
     except Exception as e:
-        _log(f"Error opening image: {e}")
+        _log_error("Error opening image: ", e)
         return None
 
 def encode_image_to_base64(image_path):
@@ -489,7 +502,7 @@ def encode_image_to_base64(image_path):
         _log(f"Error: Image file '{image_path}' not found.")
         return None
     except Exception as e:
-        _log(f"Error encoding image: {e}")
+        _log_error("Error encoding image: ", e)
         return None
 
 def exec_ollama(model:str, endpoint:str, request:str, reply_to):
@@ -645,7 +658,7 @@ def caption_image(artifact_url, model):
         g_client.post(request)
 
     except Exception as e:
-        _log(f"Error captioning image: {e}")
+        _log_error("Error captioning image: ", e)
         traceback.print_exc()
 
 def on_prompt_handler(json_data):
@@ -667,7 +680,8 @@ def gpu_infos():
             gpu = GpuInfo(index=int(index),name=name.strip(),total=int(total),free=int(free),used=int(used))
             gpus.append(gpu)
     except Exception as e:
-        _log(f"Error getting GPU info: {e}\n{output}")
+        _log_error("Error getting GPU info: ", e)
+        print(output)
     return gpus
 
 def gpus_as_jsv():
