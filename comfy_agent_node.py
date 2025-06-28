@@ -23,7 +23,7 @@ from folder_paths import base_path, get_user_directory, get_directory_by_type, m
 
 from .dtos import (
     RegisterComfyAgent, GetComfyAgentEvents, UpdateComfyAgent, UpdateComfyAgentStatus, UpdateWorkflowGeneration, GpuInfo, 
-    CaptionArtifact, CompleteOllamaGenerateTask, GetOllamaGenerateTask
+    CaptionArtifact, CompleteOllamaGenerateTask, GetOllamaGenerateTask, ComfyAgentSettings
 )
 from servicestack.clients import UploadFile
 from servicestack import JsonServiceClient, printdump, WebServiceException, ResponseStatus, from_json, EmptyResponse
@@ -47,6 +47,7 @@ g_models = None
 g_headers_json={"Content-Type": "application/json"}
 g_headers={}
 g_needs_update = False
+g_settings=ComfyAgentSettings(preserve_outputs=True)
 
 g_logger_prefix = "[comfy-agent]"
 g_node_dir = os.path.join(get_user_directory(), "comfy_agent")
@@ -193,9 +194,11 @@ def send_execution_success(prompt_id, client_id):
         _log(json.dumps(artifacts, indent=2))
 
         files = []
+        output_paths = []
         for image in artifacts:
             dir = get_directory_by_type(image['type'])
             image_path = os.path.join(dir, image['subfolder'], image['filename'])
+            output_paths.append(image_path)
             #lowercase extension
             ext = image['filename'].split('.')[-1].lower()
 
@@ -234,6 +237,15 @@ def send_execution_success(prompt_id, client_id):
             status=json.dumps(status))
         g_client.post_files_with_request(request, files)
         g_uploaded_prompts.append(prompt_id)
+
+        if not g_settings.preserve_outputs:
+            for path in output_paths:
+                try:
+                    _log(f"Deleting output: {path}")
+                    os.remove(path)
+                except Exception as e:
+                    _log(f"Error deleting file: {e}")
+
     except WebServiceException as ex:
         _log(f"Exception sending execution_success: {ex}")
         printdump(ex.response_status)
@@ -779,6 +791,9 @@ def register_agent():
             _log(f"Downloading required models: {len(response.require_models)}")
         for saveto_and_model in response.require_models:
             install_model(saveto_and_model)
+    if isinstance(response.settings, ComfyAgentSettings):
+        global g_settings
+        g_settings = response.settings
 
 def update_status_error(e: Exception, msg: str = None):
 

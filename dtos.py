@@ -1,5 +1,5 @@
 """ Options:
-Date: 2025-06-24 20:32:55
+Date: 2025-06-28 14:20:26
 Version: 8.81
 Tip: To override a DTO option, remove "#" prefix before updating
 BaseUrl: https://comfy-gateway.pvq.app
@@ -296,6 +296,12 @@ class AgentEvent:
 
 @dataclass_json(letter_case=LetterCase.CAMEL, undefined=Undefined.EXCLUDE)
 @dataclass
+class ComfyAgentSettings:
+    preserve_outputs: Optional[bool] = None
+
+
+@dataclass_json(letter_case=LetterCase.CAMEL, undefined=Undefined.EXCLUDE)
+@dataclass
 class OllamaGenerateOptions:
     # @ApiMember(Description="Enable Mirostat sampling for controlling perplexity. (default: 0, 0 = disabled, 1 = Mirostat, 2 = Mirostat 2.0)")
     mirostat: Optional[int] = None
@@ -492,6 +498,7 @@ class RegisterComfyAgentResponse:
     require_pip: Optional[List[str]] = None
     require_nodes: Optional[List[str]] = None
     require_models: Optional[List[str]] = None
+    settings: Optional[ComfyAgentSettings] = None
     response_status: Optional[ResponseStatus] = None
 
 
