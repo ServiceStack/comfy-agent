@@ -86,7 +86,8 @@ def _log_error(message, e,):
         status = e.response_status
     
     if status is not None:
-        print(f"{g_logger_prefix} {message}{status.error_code} {status.message}")
+        error_code = f"[{status.error_code}] " if status.error_code != 'Exception' else ""
+        print(f"{g_logger_prefix} {message}{error_code}{status.message}")
     else:
         print(f"{g_logger_prefix} {message}{type(e)} {e}")
 
