@@ -84,6 +84,7 @@ def _log_error(message, e,):
         status = dto.response_status
     if isinstance(e, WebServiceException):
         status = e.response_status
+    
     if status is not None:
         print(f"{g_logger_prefix} {message}{status.error_code} {status.message}")
     else:
