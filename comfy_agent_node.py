@@ -1101,6 +1101,16 @@ def update_agent(config):
 # --- ComfyUI Node Definition ---
 class ComfyAgentNode:
     NODE_NAME = "ComfyAgentNode"
+
+    # --- ComfyUI Registration ---
+    NODE_CLASS_MAPPINGS = {
+        NODE_NAME: ComfyAgentNode
+    }
+    NODE_DISPLAY_NAME_MAPPINGS = {
+        NODE_NAME: "Comfy Agent (Global)"
+    }
+
+
     RETURN_TYPES = ()
     RETURN_NAMES = ()
     FUNCTION = "updated"
@@ -1143,14 +1153,6 @@ class ComfyAgentNode:
         _log(f"Node updated. Enabled: {enabled}, API Key: {apikey}, URL: {url}")
 
         return ()
-
-# --- ComfyUI Registration ---
-NODE_CLASS_MAPPINGS = {
-    ComfyAgentNode.NODE_NAME: ComfyAgentNode
-}
-NODE_DISPLAY_NAME_MAPPINGS = {
-    ComfyAgentNode.NODE_NAME: "Comfy Agent (Global)"
-}
 
 # --- Autostart Logic ---
 
