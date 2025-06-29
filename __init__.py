@@ -2,12 +2,12 @@ import os
 from .comfy_agent_node import RegisterComfyAgentNode
 from .asset_downloader import RegisterAssetDownloader
 
-NODE_CLASS_MAPPINGS = { 
+NODE_CLASS_MAPPINGS = {
     **RegisterComfyAgentNode.NODE_CLASS_MAPPINGS,
     **RegisterAssetDownloader.NODE_CLASS_MAPPINGS,
 }
 
-NODE_DISPLAY_NAME_MAPPINGS = { 
+NODE_DISPLAY_NAME_MAPPINGS = {
     **RegisterComfyAgentNode.NODE_DISPLAY_NAME_MAPPINGS,
     **RegisterAssetDownloader.NODE_DISPLAY_NAME_MAPPINGS,
 }
