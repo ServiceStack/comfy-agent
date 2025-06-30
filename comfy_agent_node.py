@@ -882,8 +882,26 @@ def install_custom_node(repo_url):
         if repo_url in g_installed_custom_nodes:
             return
 
-        repo_name = repo_url.split('/')[-1]
         custom_nodes_dir = folder_names_and_paths["custom_nodes"][0][0]
+
+        # URLs ending with '.py' should be copied to custom_nodes directory
+        if repo_url.endswith(".py"):
+            # download file to custom_nodes directory
+            node_filename = repo_url.split('/')[-1]
+            custom_node_path = os.path.join(custom_nodes_dir, node_filename)
+            if os.path.exists(custom_node_path):
+                _log(f"{custom_node_path} already exists")
+                append_installed_item("require-nodes.txt", g_installed_custom_nodes, repo_url)
+                return
+            # use requests to download python file:
+            response = requests.get(repo_url)
+            with open(custom_node_path, 'wb') as f:
+                f.write(response.content)
+            update_status(status=f"Downloaded {node_filename}")
+            append_installed_item("require-nodes.txt", g_installed_custom_nodes, repo_url)
+            return None
+
+        repo_name = repo_url.split('/')[-1]
         custom_node_path = os.path.join(custom_nodes_dir, repo_name)
         if os.path.exists(custom_node_path):
             _log(f"{custom_node_path} already exists")
@@ -903,7 +921,7 @@ def install_custom_node(repo_url):
         append_installed_item("require-nodes.txt", g_installed_custom_nodes, repo_url)
         return o
     except Exception as e:
-        update_status_error(e, f"Error installing {repo_name}")
+        update_status_error(e, f"Error installing {repo_url}")
         return None
 
 def install_model(saveto_and_url:str):
