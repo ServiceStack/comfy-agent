@@ -58,10 +58,12 @@ g_uploaded_prompts = []
 g_language_models = None
 
 # Install
-g_status = None
+g_statuses = []
 g_installed_pip_packages = []
 g_installed_custom_nodes = []
 g_installed_models = []
+g_downloading_model = None
+g_downloading_model_args = None
 
 # --- End of Default Configuration ---
 
@@ -77,15 +79,18 @@ def _log(message):
     """Helper method for logging from the global polling task."""
     print(f"{g_logger_prefix} {message}")
 
-def _log_error(message, e,):
+def _log_error(message, e):
     """Helper method for logging errors from the global polling task."""
     status = None
     if isinstance(e, requests.exceptions.HTTPError):
-        dto = from_json(EmptyResponse, e.response.text)
-        status = dto.response_status
+        try:
+            dto = from_json(EmptyResponse, e.response.text)
+            status = dto.response_status
+        except:
+            status = ResponseStatus(error_code='HTTPError', message=e.response.text)
     if isinstance(e, WebServiceException):
         status = e.response_status
-    
+
     if status is not None:
         error_code = f"[{status.error_code}] " if status.error_code != 'Exception' else ""
         print(f"{g_logger_prefix} {message}{error_code}{status.message}")
@@ -232,8 +237,8 @@ def send_execution_success(prompt_id, client_id):
             ))
 
         request = UpdateWorkflowGeneration(device_id=DEVICE_ID, id=client_id, prompt_id=prompt_id,
-            queue_count=get_queue_count(), 
-            outputs=json.dumps(outputs), 
+            queue_count=get_queue_count(),
+            outputs=json.dumps(outputs),
             status=json.dumps(status))
         g_client.post_files_with_request(request, files)
         g_uploaded_prompts.append(prompt_id)
@@ -250,7 +255,8 @@ def send_execution_success(prompt_id, client_id):
         _log(f"Exception sending execution_success: {ex}")
         printdump(ex.response_status)
     except Exception as e:
-        _log(f"Error sending execution_success: {e}")
+        _log_error("Error sending execution_success: ", e)
+        logging.error(traceback.format_exc())
     finally:
         remove_pending_prompt(prompt_id)
 
@@ -780,22 +786,25 @@ def register_agent():
         if len(g_installed_pip_packages) == 0:
             _log(f"Installing required pip packages: {len(response.require_pip)}")
         for package in response.require_pip:
-            install_pip_package(package)
+            if package not in g_installed_pip_packages:
+                install_pip_package(package)
     if isinstance(response.require_nodes, list):
         if len(g_installed_custom_nodes) == 0:
             _log(f"Installing required custom nodes: {len(response.require_nodes)}")
         for node in response.require_nodes:
-            install_custom_node(node)
+            if node not in g_installed_custom_nodes:
+                install_custom_node(node)
     if isinstance(response.require_models, list):
         if len(g_installed_models) == 0:
             _log(f"Downloading required models: {len(response.require_models)}")
         for saveto_and_model in response.require_models:
-            install_model(saveto_and_model)
+            if saveto_and_model not in g_installed_models:
+                install_model(saveto_and_model)
     if isinstance(response.settings, ComfyAgentSettings):
         global g_settings
         g_settings = response.settings
 
-def update_status_error(e: Exception, msg: str = None):
+def update_status_error(e: Exception, msg: str = None, download_failed: str = None):
 
     if msg is None:
         msg = f"Error: {e}"
@@ -804,12 +813,16 @@ def update_status_error(e: Exception, msg: str = None):
     if isinstance(e, subprocess.CalledProcessError):
         _log(msg)
         stdout = e.stdout.decode('utf-8') if e.stdout is not None else ""
-        stderr = e.stderr.decode('utf-8') if e.stderr is not None else None
+        stderr = e.stderr.decode('utf-8') if e.stderr is not None else ""
         if stdout:
             _log(f"stdout: {stdout}")
         if stderr:
             _log(f"stderr: {stderr}")
-        update_status(status=msg, logs=f"{e.stdout}",
+        update_status(status=msg,
+            downloading='',
+            downloaded='',
+            download_failed=download_failed,
+            logs=f"{e.stdout}",
             error=ResponseStatus(
                 error_code="InstallFailed",
                 message=f"{msg}\n{stdout}"),
@@ -821,25 +834,36 @@ def update_status_error(e: Exception, msg: str = None):
         error_code="UpdateFailed",
         message=msg or f"Error: {e}"))
 
-def update_status(status: str, logs: str = None, error: ResponseStatus = None):
-    global g_status
+def update_status(status: str, downloading:str = None, downloaded:str = None, download_failed:str = None,
+                  logs: str = None, error: ResponseStatus = None):
     _log(f"status: {status}")
-    g_status = UpdateComfyAgentStatus(device_id=DEVICE_ID, status=status, logs=logs, error=error)
+    if downloaded is not None:
+        downloading = ''
+    if download_failed is not None:
+        downloading = ''
+        downloaded = ''
+    g_statuses.append(UpdateComfyAgentStatus(
+        device_id=DEVICE_ID,
+        status=status,
+        downloading=downloading,
+        downloaded=downloaded,
+        download_failed=download_failed,
+        logs=logs,
+        error=error))
     threading.Thread(target=send_update_status, daemon=True).start()
 
 def send_update_status(wait=1):
-    global g_status
-
     time.sleep(wait)
-    if g_status is not None:
-        send_status = g_status
-        g_status = None
+    if len(g_statuses) > 0:
+        last_status = g_statuses.pop()
+        g_statuses.clear()
         try:
-            g_client.post(send_status)
+            g_client.post(last_status)
         except Exception as e:
             _log(f"Error sending update status: {e}")
 
 def save_installed_items(file:str, items:list):
+    _log(f"Saving {file}")
     with open(os.path.join(g_node_dir, file), "w") as f:
         f.write("\n".join(items))
 
@@ -865,13 +889,13 @@ def append_installed_item(file:str, items:list, item:str):
 
 def install_pip_package(package_name):
     try:
-        if package_name in g_installed_pip_packages:
-            return
-
-        update_status(status=f"Installing {package_name}...")
-        o = subprocess.run(['pip', 'install', package_name], check=True)
-        update_status(status=f"Installed {package_name}", logs=f"{o.stdout}")
-        append_installed_item("requirements.txt", g_installed_pip_packages, package_name)
+        update_status(status=f"Installing {package_name}...", downloading=package_name)
+        if package_name.endswith("requirements.txt"):
+            o = subprocess.run(['pip', 'install', '-r', package_name], check=True)
+        else:
+            o = subprocess.run(['pip', 'install', package_name], check=True)
+            append_installed_item("requirements.txt", g_installed_pip_packages, package_name)
+        update_status(status=f"Installed {package_name}", downloaded=package_name, logs=f"{o.stdout}")
         return o
     except Exception as e:
         update_status_error(e, f"Error installing {package_name}")
@@ -879,9 +903,6 @@ def install_pip_package(package_name):
 
 def install_custom_node(repo_url):
     try:
-        if repo_url in g_installed_custom_nodes:
-            return
-
         custom_nodes_dir = folder_names_and_paths["custom_nodes"][0][0]
 
         # URLs ending with '.py' should be copied to custom_nodes directory
@@ -891,14 +912,16 @@ def install_custom_node(repo_url):
             custom_node_path = os.path.join(custom_nodes_dir, node_filename)
             if os.path.exists(custom_node_path):
                 _log(f"{custom_node_path} already exists")
+                update_status(status=f"Already downloaded {node_filename}", downloaded=node_filename)
                 append_installed_item("require-nodes.txt", g_installed_custom_nodes, repo_url)
                 return
             # use requests to download python file:
             response = requests.get(repo_url)
             with open(custom_node_path, 'wb') as f:
                 f.write(response.content)
-            update_status(status=f"Downloaded {node_filename}")
+            update_status(status=f"Downloaded {node_filename}", downloaded=repo_url)
             append_installed_item("require-nodes.txt", g_installed_custom_nodes, repo_url)
+            agent_needs_updating()
             return None
 
         repo_name = repo_url.split('/')[-1]
@@ -909,14 +932,16 @@ def install_custom_node(repo_url):
             return
 
         _log("Installing custom node: " + repo_name + " in " + custom_nodes_dir)
-        update_status(status=f"Installing {repo_name}...")
+        update_status(status=f"Installing {repo_name}...", downloading=repo_url)
         o = subprocess.run(['git', 'clone', repo_url, custom_node_path], check=True)
-        update_status(status=f"Installed {repo_name}", logs=f"{o.stdout}")
 
         # if they have a requirements.txt, install it
         if os.path.exists(os.path.join(custom_node_path, "requirements.txt")):
+            update_status(status=f"Installing {repo_name} requirements.txt...", downloading=repo_url, logs=f"{o.stdout}")
             o = install_pip_package(os.path.join(custom_node_path, "requirements.txt"))
-            update_status(status=f"Installed {repo_name} packages", logs=f"{o.stdout}")
+
+        update_status(status=f"Installed {repo_name}", downloaded=repo_url, logs=f"{o.stdout}")
+        agent_needs_updating()
 
         append_installed_item("require-nodes.txt", g_installed_custom_nodes, repo_url)
         return o
@@ -930,9 +955,8 @@ def install_model(saveto_and_url:str):
 
 def download_model(save_to, url):
     try:
+        # _log(f"download_model({save_to}, {url})")
         item = f"{save_to} {url}"
-        if item in g_installed_models:
-            return
 
         save_to_path = os.path.join(models_dir, save_to)
         if os.path.exists(save_to_path):
@@ -943,8 +967,6 @@ def download_model(save_to, url):
         # create parent directory if it doesn't exist
         os.makedirs(os.path.dirname(save_to_path), exist_ok=True)
 
-        update_status(status=f"Downloading model {url}...")
-
         # url format is <env-with-token?>@?<url-to-download> e,g:
         # $GITHUB_TOKEN@https://github.com/notAI-tech/NudeNet/releases/download/v3.4-weights/640m.onnx
         # $GITHUB_TOKEN@https://raw.githubusercontent.com/notAI-tech/NudeNet/refs/heads/v3/nudenet/320n.onnx
@@ -952,6 +974,8 @@ def download_model(save_to, url):
         # https://huggingface.co/Comfy-Org/HiDream-I1_ComfyUI/resolve/main/split_files/diffusion_models/hidream_i1_fast_fp8.safetensors
 
         curl_args = ['curl','-L']
+        requests_headers = {}
+        filename = os.path.basename(save_to_path)
         if '@' in url:
             token, url = url.split('@', 1)
             # if it starts with $, replace with env value
@@ -963,9 +987,9 @@ def download_model(save_to, url):
                     else:
                         env_token = os.environ.get(token[1:], '')
                         if not env_token:
-                            update_status(status=f"Missing environment variable {token[1:]}", error=ResponseStatus(
-                                error_code="MissingToken", 
-                                message=f"Token {token} is required"))
+                            update_status(status=f"Missing environment variable {token[1:]}",
+                                downloading=filename,
+                                error=ResponseStatus(error_code="Missing Token", message=f"Token {token} is required"))
                             return None
                         else:
                             token = env_token
@@ -974,25 +998,96 @@ def download_model(save_to, url):
 
             if 'github.com' in url:
                 curl_args += ['-H', f'Authorization: token {token}']
+                requests_headers['Authorization'] = f'token {token}'
             else:
                 curl_args += ['-H', f'Authorization: Bearer {token}']
+                requests_headers['Authorization'] = f'Bearer {token}'
 
+        update_status(status=f"Downloading {save_to}...", downloading=filename)
         curl_args += ['-o', save_to_path, url]
-        # print("curl_args")
-        # printdump(curl_args)
+        # start monitoring download in a background thread
+        threading.Thread(target=start_monitoring_download, args=(save_to_path, url, requests_headers), daemon=True).start()
         o = subprocess.run(curl_args, check=True)
-        update_status(status=f"Downloaded model {url} to {save_to}", logs=f"{o.stdout}")
+
+        global g_downloading_model
+        g_downloading_model = None
+        update_status(status=f"Downloaded {filename} {format_bytes(os.path.getsize(save_to_path) or 0)}",
+            downloading=filename)
         append_installed_item("require-models.txt", g_installed_models, item)
+        agent_needs_updating()
         return o
     except Exception as e:
         update_status_error(e, f"Error downoading {url} to {save_to}")
         return None
 
+def start_monitoring_download(save_to_path, url, headers):
+    global g_downloading_model
+    try:
+        _log(f"start_monitoring_download({save_to_path}, {url}, {headers})")
+        # get content length
+        response = requests.head(url, headers=headers, allow_redirects=True)
+        _log(f"monitoring_download HEAD {url}, status: {response.status_code}, Content-Length: {response.headers.get('Content-Length')}")
+        if response.status_code < 300:
+            content_length = int(response.headers.get("Content-Length"))
+        else:
+            # attempt to get content length from GET
+            _log(f"monitoring_download GET {url}")
+            response = requests.get(url, headers=headers, stream=True)
+            _log(f"monitoring_download GET {url}, status: {response.status_code}, Content-Length: {response.headers.get('Content-Length')}")
+            if response.status_code < 300:
+                content_length = int(response.headers.get("Content-Length"))
+                response.close()
+            else:
+                content_length = None
+
+        if content_length is not None:
+            g_downloading_model = save_to_path
+            filename = os.path.basename(save_to_path)
+            _log(f"monitoring_download: {filename} ({format_bytes(content_length)})")
+            partial_download_exists = os.path.exists(save_to_path)
+            if not partial_download_exists:
+                retry_times = 5
+                while not partial_download_exists and retry_times > 0:
+                    retry_times -= 1
+                    time.sleep(1)
+                    partial_download_exists = os.path.exists(save_to_path)
+                if not partial_download_exists:
+                    g_downloading_model = None
+                    _log(f"{save_to_path} partial download does not exist, exiting...")
+                    return
+
+            filename = os.path.basename(save_to_path)
+            while g_downloading_model == save_to_path and os.path.exists(save_to_path):
+                partial_download_length = os.path.getsize(save_to_path)
+                if partial_download_length >= content_length:
+                    g_downloading_model = None
+                    _log(f"Downloaded {filename} ({format_bytes(partial_download_length)})")
+                    update_status(status=f"Downloaded {filename} {format_bytes(partial_download_length)}",
+                        downloading=filename)
+                    return
+
+                update_status(status=f"Downloading {filename} {format_bytes(partial_download_length)} of {format_bytes(content_length)}...",
+                        downloading=filename)
+                time.sleep(2)
+        else:
+            return
+    except Exception as e:
+        _log_error(f"Error monitoring download: {url}", e)
+
+def format_bytes(bytes):
+    if bytes < 1024:
+        return f"{bytes} B"
+    elif bytes < 1024 * 1024:
+        return f"{bytes / 1024:.2f} KB"
+    elif bytes < 1024 * 1024 * 1024:
+        return f"{bytes / 1024 / 1024:.2f} MB"
+    else:
+        return f"{bytes / 1024 / 1024 / 1024:.2f} GB"
+
 def reboot():
     reboot_url = f"{get_server_url()}/api/manager/reboot"
     try:
-        global g_status
-        g_status = UpdateComfyAgentStatus(device_id=DEVICE_ID, status="Rebooting...")
+        g_statuses.append(UpdateComfyAgentStatus(device_id=DEVICE_ID, status="Rebooting..."))
         send_update_status(wait=0)
 
         _log("Rebooting...")
@@ -1051,11 +1146,15 @@ def load_config():
     except Exception as e:
         _log(f"Error loading config: {e}")
 
+def agent_needs_updating():
+    global g_needs_update
+    g_needs_update = True
+
 def save_config(config):
-    global g_config, g_client, g_needs_update
+    global g_config, g_client
     g_config.update(config)
     g_client = create_client()
-    g_needs_update = True
+    agent_needs_updating()
     os.makedirs(g_node_dir, exist_ok=True)
     _log("Saving config...")
     # _log("Saving config: " + json.dumps(g_config))
@@ -1095,6 +1194,27 @@ def start():
         g_installed_pip_packages = load_installed_items("requirements.txt")
         g_installed_custom_nodes = load_installed_items("require-nodes.txt")
         g_installed_models = load_installed_items("require-models.txt")
+
+        custom_nodes_dir = folder_names_and_paths["custom_nodes"][0][0]
+
+        installed_count = len(g_installed_custom_nodes)
+        for repo_url in g_installed_custom_nodes:
+            dir_or_file = repo_url.split("/")[-1]
+            if not os.path.exists(os.path.join(custom_nodes_dir, dir_or_file)):
+                g_installed_custom_nodes.remove(repo_url)
+                _log(f"Removed missing custom node {repo_url}")
+        if installed_count != len(g_installed_custom_nodes):
+            save_installed_items("require-nodes.txt", g_installed_custom_nodes)
+
+        installed_count = len(g_installed_models)
+        for saveto_and_url in g_installed_models:
+            save_to = saveto_and_url.split(" ", 1)[0]
+            model_path = os.path.join(models_dir, save_to)
+            if not os.path.exists(model_path):
+                g_installed_models.remove(saveto_and_url)
+                _log(f"Removed missing model {save_to}")
+        if installed_count != len(g_installed_models):
+            save_installed_items("require-models.txt", g_installed_models)
 
         try:
             _log("Setting up global polling task.")

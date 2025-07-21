@@ -1,5 +1,5 @@
 """ Options:
-Date: 2025-06-28 14:20:26
+Date: 2025-07-01 14:15:43
 Version: 8.81
 Tip: To override a DTO option, remove "#" prefix before updating
 BaseUrl: https://comfy-gateway.pvq.app
@@ -748,6 +748,9 @@ class UpdateComfyAgentStatus(IReturn[EmptyResponse], IPost):
     # @Validate(Validator="ExactLength(32)")
     device_id: Optional[str] = None
 
+    downloading: Optional[str] = None
+    downloaded: Optional[str] = None
+    download_failed: Optional[str] = None
     status: Optional[str] = None
     logs: Optional[str] = None
     error: Optional[ResponseStatus] = None

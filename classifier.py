@@ -2,8 +2,10 @@ import time
 import torch
 import clip
 from PIL import Image
-from ultralytics import YOLO
+
 import supervision as sv
+from ultralytics import YOLO
+
 import numpy as np
 import os
 
