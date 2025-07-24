@@ -256,7 +256,10 @@ def send_execution_success(prompt_id, client_id):
         printdump(ex.response_status)
     except Exception as e:
         _log_error("Error sending execution_success: ", e)
-        logging.error(traceback.format_exc())
+        stack_trace = traceback.format_exc()
+        logging.error(stack_trace)
+        exception_type = type(e).__name__ or "Exception"
+        send_execution_error(prompt_id, client_id, exception_type, str(e), stack_trace)
     finally:
         remove_pending_prompt(prompt_id)
 
