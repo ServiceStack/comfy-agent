@@ -983,7 +983,7 @@ def download_model(save_to, url):
             token, url = url.split('@', 1)
             # if it starts with $, replace with env value
             if token.startswith('$'):
-                token_lower = token.lower()
+                token_lower = token[1:].lower()
                 if token_lower.endswith('token'):
                     if token_lower in g_config:
                         token = g_config[token_lower]
