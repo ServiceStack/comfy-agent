@@ -1014,8 +1014,27 @@ def download_model(save_to, url):
 
         global g_downloading_model
         g_downloading_model = None
+
+        # check if downloaded file is a JSON error, first if its less than 1kb
+        # CivitAI error example:
+        # {"error":"Unauthorized","message":"The creator of this asset requires you to be logged in to download it"}
+        if os.path.getsize(save_to_path) < 1024:
+            with open(save_to_path, 'r') as f:
+                try:
+                    json_data = json.load(f)
+                    if 'message' in json_data:
+                        update_status(status=f"Download failed: {json_data['message']}",
+                            download_failed=filename,
+                            error=ResponseStatus(
+                                error_code=json_data.get('error', 'DownloadFailed'),
+                                message=json_data['message']))
+                        os.remove(save_to_path)
+                        return None
+                except:
+                    pass
+
         update_status(status=f"Downloaded {filename} {format_bytes(os.path.getsize(save_to_path) or 0)}",
-            downloading=filename)
+            downloaded=filename)
         append_installed_item("require-models.txt", g_installed_models, item)
         agent_needs_updating()
         return o
