@@ -400,10 +400,10 @@ def send_update(sleep=0.1):
         request.queue_count = len(queue_running) + len(queue_pending)
 
         # get running generation ids (client_id) (max 20)
-        request.running_generation_ids = [entry[3]['client_id'] for entry in queue_running 
+        request.running_generation_ids = [entry[3]['client_id'] for entry in queue_running
             if len(entry[3] and entry[3]['client_id'] or '') == 32][:20]
         # get queued generation ids (client_id) (max 20)
-        request.queued_generation_ids = [entry[3]['client_id'] for entry in queue_pending 
+        request.queued_generation_ids = [entry[3]['client_id'] for entry in queue_pending
             if len(entry[3] and entry[3]['client_id'] or '') == 32][:20]
 
         _log(f"send_update: queue_count={request.queue_count}, running={request.running_generation_ids}, queued={request.queued_generation_ids}")
@@ -991,7 +991,7 @@ def download_model(save_to, url):
                         env_token = os.environ.get(token[1:], '')
                         if not env_token:
                             update_status(status=f"Missing environment variable {token[1:]}",
-                                downloading=filename,
+                                download_failed=filename,
                                 error=ResponseStatus(error_code="Missing Token", message=f"Token {token} is required"))
                             return None
                         else:
