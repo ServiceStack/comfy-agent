@@ -4,6 +4,7 @@ import shutil
 from tqdm import tqdm
 from server import PromptServer
 from folder_paths import models_dir
+from .comfy_agent_node import download_model, install_custom_node, install_pip_package
 
 g_logger_prefix = "[comfy-agent/requires]"
 def _log(message):
@@ -58,80 +59,90 @@ class RequiresAssetNode:
                 "node_id": "UNIQUE_ID"
             }
         }
-
     def download(self, url, save_to, filename, node_id, token=""):
-        if not url or not save_to or not filename:
-            _log(f"Missing required values: url='{url}', save_to='{save_to}', filename='{filename}'")
-            return ()
+        if token:
+            url = token + '@' + url
+        with tqdm(total=1, unit='iB', unit_scale=True, desc=filename) as pbar:
+            download_model(os.path.join(save_to, filename), url,
+                progress_callback=lambda file_name, partial_size, total_size:
+                    self.update_progress(node_id, pbar, partial_size, total_size))
+        return ()
 
-        # Sanitize save_to to ensure it's within models_dir
-        safe_save_to = os.path.normpath(os.path.join(models_dir, save_to))
-        if not safe_save_to.startswith(models_dir):
-            _log(f"Invalid save_to path. Must be within {models_dir}")
-            return ()
-        save_to = os.path.relpath(safe_save_to, models_dir)
+    def update_progress(self, node_id, pbar, partial_size, total_size):
+        progress = partial_size/total_size
+        pbar.update(progress)
+        PromptServer.instance.send_sync("progress", {
+            "node": node_id,
+            "value": progress,
+            "max": 1
+        })
 
-        relative_path = os.path.join(save_to, filename)
-        save_path = os.path.join(models_dir, relative_path)
-        if os.path.exists(save_path):
-            _log(f"File already exists: {relative_path}")
-            return ()
+class RequiresCustomNode:
+    NODE_NAME = "RequiresCustomNode"
+    RETURN_TYPES = ()
+    OUTPUT_NODE = True
+    FUNCTION = "download"
+    CATEGORY = "comfy_agent"
 
-        _log(f'Downloading {url} to {relative_path} {" with token" if token else ""}')
-        self.node_id = node_id
+    def __init__(self):
+        self.status = "Idle"
+        self.progress = 0.0
+        self.node_id = None
 
-        # if token starts with `$` replace with environment variable if exists
-        if token.startswith("$"):
-            env_value = os.getenv(token[1:])
-            token = env_value if env_value is not None else token
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "repo": ("STRING", {"multiline": False, "default": ""}),
+            },
+            "hidden": {
+                "node_id": "UNIQUE_ID"
+            }
+        }
 
-        headers={"Authorization": f"Bearer {token}"} if token else None
+    def download(self, repo, node_id):
+        # prepend https://github.com/ if not already present
+        if not repo.startswith("http"):
+            repo = f"https://github.com/{repo}"
+        install_custom_node(repo)
+        return ()
 
-        _log(f"Downloading {url} to {relative_path} {'with Authorization header' if headers else ''}")
-        response = requests.get(url, headers=headers, stream=True)
-        response.raise_for_status()
+class RequiresPipPackage:
+    NODE_NAME = "RequiresPipPackage"
+    RETURN_TYPES = ()
+    OUTPUT_NODE = True
+    FUNCTION = "download"
+    CATEGORY = "comfy_agent"
 
-        total_size = int(response.headers.get('content-length', 0))
-        temp_path = save_path + '.tmp'
+    def __init__(self):
+        self.status = "Idle"
+        self.progress = 0.0
+        self.node_id = None
 
-        downloaded = 0
-        last_progress_update = 0
-        try:
-            with open(temp_path, 'wb') as file:
-                with tqdm(total=total_size, unit='iB', unit_scale=True, desc=filename) as pbar:
-                    for data in response.iter_content(chunk_size=4*1024*1024):
-                        size = file.write(data)
-                        downloaded += size
-                        pbar.update(size)
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "package": ("STRING", {"multiline": False, "default": ""}),
+            },
+            "hidden": {
+                "node_id": "UNIQUE_ID"
+            }
+        }
 
-                        if total_size > 0:
-                            progress = (downloaded / total_size) * 100.0
-                            if (progress - last_progress_update) > 0.2:
-                                print(f"Downloading {filename}... {progress:.1f}%")
-                                last_progress_update = progress
-                            if progress is not None and hasattr(self, 'node_id'):
-                                PromptServer.instance.send_sync("progress", {
-                                    "node": self.node_id,
-                                    "value": progress,
-                                    "max": 100
-                                })
-
-            shutil.move(temp_path, save_path)
-            print(f"Complete! {filename} saved to {save_path}")
-            return save_path
-
-        except Exception as e:
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
-            raise e
-
+    def download(self, package, node_id, version=""):
+        install_pip_package(package)
         return ()
 
 # --- ComfyUI Registration ---
 class RegisterRequireNodes:
     NODE_CLASS_MAPPINGS = {
-        RequiresAssetNode.NODE_NAME: RequiresAssetNode
+        RequiresAssetNode.NODE_NAME: RequiresAssetNode,
+        RequiresCustomNode.NODE_NAME: RequiresCustomNode,
+        RequiresPipPackage.NODE_NAME: RequiresPipPackage,
     }
     NODE_DISPLAY_NAME_MAPPINGS = {
-        RequiresAssetNode.NODE_NAME: "Requires Asset"
+        RequiresAssetNode.NODE_NAME: "Requires Asset",
+        RequiresCustomNode.NODE_NAME: "Requires Custom Node",
+        RequiresPipPackage.NODE_NAME: "Requires PIP Package",
     }
