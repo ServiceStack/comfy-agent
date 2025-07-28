@@ -1,5 +1,5 @@
 """ Options:
-Date: 2025-07-01 14:15:43
+Date: 2025-07-28 11:02:46
 Version: 8.81
 Tip: To override a DTO option, remove "#" prefix before updating
 BaseUrl: https://comfy-gateway.pvq.app
@@ -777,6 +777,9 @@ class RegisterComfyAgent(IReturn[RegisterComfyAgentResponse], IPost):
     queue_count: int = 0
     gpus: Optional[List[GpuInfo]] = None
     language_models: Optional[List[str]] = None
+    installed_pip: Optional[List[str]] = None
+    installed_nodes: Optional[List[str]] = None
+    installed_models: Optional[List[str]] = None
 
 
 @dataclass_json(letter_case=LetterCase.CAMEL, undefined=Undefined.EXCLUDE)

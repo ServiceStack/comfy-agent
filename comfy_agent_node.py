@@ -797,6 +797,9 @@ def register_agent():
             gpus=gpu_infos(),
             queue_count=get_queue_count(),
             language_models=g_language_models,
+            installed_pip=g_installed_pip_packages,
+            installed_nodes=g_installed_custom_nodes,
+            installed_models=g_installed_models,
         ),
         file=object_info_file)
 
