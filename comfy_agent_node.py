@@ -378,6 +378,10 @@ def listen_to_messages_poll():
                         install_custom_node(event.args['url'])
                     elif event.name == "DownloadModel":
                         install_model(event.args['model'])
+                    elif event.name == "DeleteModel":
+                        delete_model(event.args['path'])
+                    elif event.name == "Refresh":
+                        send_update(sleep=0)
                     elif event.name == "Reboot":
                         reboot()
         except Exception as ex:
@@ -391,7 +395,7 @@ def listen_to_messages_poll():
 def get_queue_count():
     return PromptServer.instance.get_queue_info()['exec_info']['queue_remaining']
 
-def send_update(sleep=0.1):
+def send_update(sleep=0.1,upload_objects=False):
     if sleep > 0:
         time.sleep(sleep)
     try:
@@ -399,8 +403,14 @@ def send_update(sleep=0.1):
         queue_running = current_queue[0]
         queue_pending = current_queue[1]
 
-        request = UpdateComfyAgent(device_id=DEVICE_ID, gpus=gpu_infos(),
-            queue_count=len(queue_running) + len(queue_pending))
+        request = UpdateComfyAgent(device_id=DEVICE_ID,
+            gpus=gpu_infos(),
+            language_models=g_language_models,
+            installed_pip=g_installed_pip_packages,
+            installed_nodes=g_installed_custom_nodes,
+            installed_models=g_installed_models
+        )
+
         request.queue_count = len(queue_running) + len(queue_pending)
 
         # get running generation ids (client_id) (max 20)
@@ -410,8 +420,19 @@ def send_update(sleep=0.1):
         request.queued_generation_ids = [entry[3]['client_id'] for entry in queue_pending
             if len(entry[3] and entry[3]['client_id'] or '') == 32][:20]
 
-        _log(f"send_update: queue_count={request.queue_count}, running={request.running_generation_ids}, queued={request.queued_generation_ids}")
-        g_client.post(request)
+        _log(f"send_update(objects={upload_objects}): queue_count={request.queue_count}, running={request.running_generation_ids}, queued={request.queued_generation_ids}")
+        if not upload_objects:
+            g_client.post(request)
+        else:
+            object_info_json = get_object_info_json()
+            object_info_file = UploadFile(
+                field_name="object_info",
+                file_name="object_info.json",
+                content_type="application/json",
+                stream=io.BytesIO(object_info_json.encode('utf-8')))
+            g_client.post_file_with_request(request,
+                file=object_info_file)
+
     except WebServiceException as ex:
         status = ex.response_status
         if status.error_code == "NotFound":
@@ -884,7 +905,7 @@ def update_status(status: str, downloading:str = None, downloaded:str = None, do
     if wait == 0:
         send_update_status(wait)
     else:
-        threading.Thread(target=send_update_status, args=(wait), daemon=True).start()
+        threading.Thread(target=send_update_status, args=(wait,), daemon=True).start()
 
 
 def send_update_status(wait=1):
@@ -987,6 +1008,22 @@ def install_custom_node(repo_url):
     except Exception as e:
         update_status_error(e, f"Error installing {repo_url}")
         return None
+
+def delete_model(path):
+    try:
+        model_path = os.path.join(models_dir, path)
+        if not os.path.exists(model_path):
+            _log(f"Model {model_path} does not exist")
+            return
+        os.remove(model_path)
+        _log(f"Deleted model {model_path}")
+    except Exception as e:
+        _log(f"Error deleting {path}: {e}")
+    finally:
+        # remove model starting with path
+        global g_installed_models
+        g_installed_models = [m for m in g_installed_models if not m.startswith(path)]
+        send_update(sleep=0, upload_objects=True)
 
 def install_model(saveto_and_url:str):
     save_to, url = saveto_and_url.split(' ', 1)
