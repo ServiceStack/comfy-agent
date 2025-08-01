@@ -32,6 +32,12 @@ def immediate_folders(directory_path):
                     folders.append(os.path.join(d, sd))
     return folders
 
+def filename_list(folder_name):
+    try:
+        return get_filename_list(folder_name)
+    except:
+        return []
+
 class RequiresAssetNode:
     NODE_NAME = "RequiresAsset"
     RETURN_TYPES = ()
@@ -57,24 +63,24 @@ class RequiresAssetNode:
             },
             "hidden": {
                 "node_id": "UNIQUE_ID",
-                "checkpoints":      (get_filename_list("checkpoints"),),
-                "clip":             (get_filename_list("clip"),),
-                "clip_vision":      (get_filename_list("clip_vision"),),
-                "configs":          (get_filename_list("configs"),),
-                "controlnet":       (get_filename_list("controlnet"),),
-                "diffusers":        (get_filename_list("diffusers"),),
-                "diffusion_models": (get_filename_list("diffusion_models"),),
-                "embeddings":       (get_filename_list("embeddings"),),
-                "gligen":           (get_filename_list("gligen"),),
-                "hypernetworks":    (get_filename_list("hypernetworks"),),
-                "loras":            (get_filename_list("loras"),),
-                "photomaker":       (get_filename_list("photomaker"),),
-                "style_models":     (get_filename_list("style_models"),),
-                "upscale_models":   (get_filename_list("upscale_models"),),
-                "vae":              (get_filename_list("vae"),),
-                "vae_approx":       (get_filename_list("vae_approx"),),
-                "ultralytics":      (get_filename_list("ultralytics"),),
-                "sams":             (get_filename_list("sams"),),
+                "checkpoints":      (filename_list("checkpoints"),),
+                "clip":             (filename_list("clip"),),
+                "clip_vision":      (filename_list("clip_vision"),),
+                "configs":          (filename_list("configs"),),
+                "controlnet":       (filename_list("controlnet"),),
+                "diffusers":        (filename_list("diffusers"),),
+                "diffusion_models": (filename_list("diffusion_models"),),
+                "embeddings":       (filename_list("embeddings"),),
+                "gligen":           (filename_list("gligen"),),
+                "hypernetworks":    (filename_list("hypernetworks"),),
+                "loras":            (filename_list("loras"),),
+                "photomaker":       (filename_list("photomaker"),),
+                "style_models":     (filename_list("style_models"),),
+                "upscale_models":   (filename_list("upscale_models"),),
+                "vae":              (filename_list("vae"),),
+                "vae_approx":       (filename_list("vae_approx"),),
+                "ultralytics":      (filename_list("ultralytics"),),
+                "sams":             (filename_list("sams"),),
             }
         }
     def download(self, url, save_to, filename, node_id, token=""):
