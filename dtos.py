@@ -1,5 +1,5 @@
 """ Options:
-Date: 2025-07-30 15:39:32
+Date: 2025-08-04 14:37:45
 Version: 8.81
 Tip: To override a DTO option, remove "#" prefix before updating
 BaseUrl: https://comfy-gateway.pvq.app
@@ -34,6 +34,14 @@ class GpuInfo:
     total: int = 0
     free: int = 0
     used: int = 0
+
+
+@dataclass_json(letter_case=LetterCase.CAMEL, undefined=Undefined.EXCLUDE)
+@dataclass
+class ComfyAgentConfig:
+    install_models: Optional[bool] = None
+    install_nodes: Optional[bool] = None
+    install_packages: Optional[bool] = None
 
 
 @dataclass_json(letter_case=LetterCase.CAMEL, undefined=Undefined.EXCLUDE)
@@ -736,11 +744,14 @@ class UpdateComfyAgent(IReturn[EmptyResponse], IPost):
     device_id: Optional[str] = None
 
     queue_count: int = 0
+    status: Optional[str] = None
+    error: Optional[ResponseStatus] = None
     gpus: Optional[List[GpuInfo]] = None
+    models: Optional[Dict[str, List[str]]] = None
+    language_models: Optional[List[str]] = None
     installed_pip: Optional[List[str]] = None
     installed_nodes: Optional[List[str]] = None
     installed_models: Optional[List[str]] = None
-    language_models: Optional[List[str]] = None
     running_generation_ids: Optional[List[str]] = None
     queued_generation_ids: Optional[List[str]] = None
 
@@ -752,9 +763,6 @@ class UpdateComfyAgentStatus(IReturn[EmptyResponse], IPost):
     # @Validate(Validator="ExactLength(32)")
     device_id: Optional[str] = None
 
-    downloading: Optional[str] = None
-    downloaded: Optional[str] = None
-    download_failed: Optional[str] = None
     status: Optional[str] = None
     logs: Optional[str] = None
     error: Optional[ResponseStatus] = None
@@ -780,10 +788,12 @@ class RegisterComfyAgent(IReturn[RegisterComfyAgentResponse], IPost):
     workflows: List[str] = field(default_factory=list)
     queue_count: int = 0
     gpus: Optional[List[GpuInfo]] = None
+    models: Optional[Dict[str, List[str]]] = None
     language_models: Optional[List[str]] = None
     installed_pip: Optional[List[str]] = None
     installed_nodes: Optional[List[str]] = None
     installed_models: Optional[List[str]] = None
+    config: Optional[ComfyAgentConfig] = None
 
 
 @dataclass_json(letter_case=LetterCase.CAMEL, undefined=Undefined.EXCLUDE)

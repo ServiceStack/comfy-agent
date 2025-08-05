@@ -6,6 +6,7 @@
 
 import io
 import os
+import shutil
 import uuid
 import threading
 import time
@@ -17,12 +18,13 @@ import subprocess
 import logging
 import traceback
 import base64
+import datetime
 
 from server import PromptServer
-from folder_paths import base_path, get_user_directory, get_input_directory, get_directory_by_type, models_dir, folder_names_and_paths
+from folder_paths import base_path, get_filename_list, get_user_directory, get_input_directory, get_directory_by_type, models_dir, folder_names_and_paths, recursive_search
 
 from .dtos import (
-    RegisterComfyAgent, GetComfyAgentEvents, UpdateComfyAgent, UpdateComfyAgentStatus, UpdateWorkflowGeneration, GpuInfo, 
+    ComfyAgentConfig, RegisterComfyAgent, GetComfyAgentEvents, UpdateComfyAgent, UpdateComfyAgentStatus, UpdateWorkflowGeneration, GpuInfo, 
     CaptionArtifact, CompleteOllamaGenerateTask, GetOllamaGenerateTask, ComfyAgentSettings
 )
 from servicestack.clients import UploadFile
@@ -36,12 +38,21 @@ from .imagehash import phash, dominant_color_hex
 
 VERSION = 1
 DEFAULT_AUTOSTART = True
+DEFAULT_INSTALL_MODELS   = True
+DEFAULT_INSTALL_NODES    = True
+DEFAULT_INSTALL_PACKAGES = True
 DEFAULT_ENDPOINT_URL = "https://comfy-gateway.pvq.app"
 DEFAULT_POLL_INTERVAL_SECONDS = 10
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 60
 DEVICE_ID = None
 
-g_config = { 'enabled': DEFAULT_AUTOSTART }  # Stores the active configuration for the global poller
+# Stores the active configuration for the global poller
+g_config = {
+    'enabled':          DEFAULT_AUTOSTART,
+    'install_models':   DEFAULT_INSTALL_MODELS,
+    'install_nodes':    DEFAULT_INSTALL_NODES,
+    'install_packages': DEFAULT_INSTALL_PACKAGES,
+}
 g_client = None
 g_models = None
 g_headers_json={"Content-Type": "application/json"}
@@ -65,6 +76,7 @@ g_installed_models = []
 g_downloading_model = None
 g_downloading_model_args = None
 
+MSG_RESTART_COMFY = "Restart ComfyUI for changes to take effect."
 # --- End of Default Configuration ---
 
 # Maintain a global dictionary of prompt_id mapping to client_id
@@ -100,6 +112,18 @@ def _log_error(message, e):
 def is_enabled():
     global g_config
     return 'enabled' in g_config and g_config['enabled'] or False
+
+def allow_installing_models():
+    global g_config
+    return 'install_models' in g_config and g_config['install_models'] or False
+
+def allow_installing_nodes():
+    global g_config
+    return 'install_nodes' in g_config and g_config['install_nodes'] or False
+
+def allow_installing_packages():
+    global g_config
+    return 'install_packages' in g_config and g_config['install_packages'] or False
 
 def config_str(name:str):
     return name in g_config and g_config[name] or ""
@@ -347,7 +371,7 @@ def listen_to_messages_poll():
     while is_enabled():
         try:
             g_running = True
-            send_update(sleep=0)
+            send_update()
 
             if g_needs_update:
                 g_needs_update = False
@@ -374,14 +398,19 @@ def listen_to_messages_poll():
                         caption_image(event.args['url'], event.args['model'])
                     elif event.name == "InstallPipPackage":
                         install_pip_package(event.args['package'])
+                    elif event.name == "UninstallPipPackage":
+                        uninstall_pip_package(event.args['package'])
                     elif event.name == "InstallCustomNode":
                         install_custom_node(event.args['url'])
+                    elif event.name == "UninstallCustomNode":
+                        uninstall_custom_node(event.args['url'])
                     elif event.name == "DownloadModel":
                         install_model(event.args['model'])
                     elif event.name == "DeleteModel":
                         delete_model(event.args['path'])
                     elif event.name == "Refresh":
-                        send_update(sleep=0)
+                        time_str=datetime.datetime.now().strftime("%H:%M:%S")
+                        send_update(status=f"Updated at {time_str}")
                     elif event.name == "Reboot":
                         reboot()
         except Exception as ex:
@@ -394,55 +423,6 @@ def listen_to_messages_poll():
 
 def get_queue_count():
     return PromptServer.instance.get_queue_info()['exec_info']['queue_remaining']
-
-def send_update(sleep=0.1,upload_objects=False):
-    if sleep > 0:
-        time.sleep(sleep)
-    try:
-        current_queue = PromptServer.instance.prompt_queue.get_current_queue()
-        queue_running = current_queue[0]
-        queue_pending = current_queue[1]
-
-        request = UpdateComfyAgent(device_id=DEVICE_ID,
-            gpus=gpu_infos(),
-            language_models=g_language_models,
-            installed_pip=g_installed_pip_packages,
-            installed_nodes=g_installed_custom_nodes,
-            installed_models=g_installed_models
-        )
-
-        request.queue_count = len(queue_running) + len(queue_pending)
-
-        # get running generation ids (client_id) (max 20)
-        request.running_generation_ids = [entry[3]['client_id'] for entry in queue_running
-            if len(entry[3] and entry[3]['client_id'] or '') == 32][:20]
-        # get queued generation ids (client_id) (max 20)
-        request.queued_generation_ids = [entry[3]['client_id'] for entry in queue_pending
-            if len(entry[3] and entry[3]['client_id'] or '') == 32][:20]
-
-        _log(f"send_update(objects={upload_objects}): queue_count={request.queue_count}, running={request.running_generation_ids}, queued={request.queued_generation_ids}")
-        if not upload_objects:
-            g_client.post(request)
-        else:
-            object_info_json = get_object_info_json()
-            object_info_file = UploadFile(
-                field_name="object_info",
-                file_name="object_info.json",
-                content_type="application/json",
-                stream=io.BytesIO(object_info_json.encode('utf-8')))
-            g_client.post_file_with_request(request,
-                file=object_info_file)
-
-    except WebServiceException as ex:
-        status = ex.response_status
-        if status.error_code == "NotFound":
-            _log("Device not found, reregistering")
-            register_agent()
-            return
-        else:
-            _log(f"Error sending update: {ex.message}\n{printdump(status)}")
-    except Exception as e:
-        _log_error("Error sending update: ", e)
 
 def resolve_url(url):
     #if relative path, combine with BASE_URL
@@ -817,10 +797,16 @@ def register_agent():
             workflows=workflows,
             gpus=gpu_infos(),
             queue_count=get_queue_count(),
+            models=get_model_files(),
             language_models=g_language_models,
             installed_pip=g_installed_pip_packages,
             installed_nodes=g_installed_custom_nodes,
             installed_models=g_installed_models,
+            config=ComfyAgentConfig(
+                install_models=allow_installing_models(),
+                install_nodes=allow_installing_nodes(),
+                install_packages=allow_installing_packages(),
+            )
         ),
         file=object_info_file)
 
@@ -854,61 +840,59 @@ def register_agent():
         global g_settings
         g_settings = response.settings
 
-def update_status_error(e: Exception, msg: str = None, download_failed: str = None):
+def to_error_status(e: Exception, error_code=None, message=None):
+    if e is None:
+        return None
+    if error_code is None:
+        error_code = type(e).__name__ or "Exception"
+    if message is None:
+        message = f"{e}"
+    elif message.endswith(":"):
+        message += f" {e}"
 
-    if msg is None:
-        msg = f"Error: {e}"
+    if isinstance(e, subprocess.CalledProcessError):
+        return ResponseStatus(
+            error_code=error_code,
+            message=message,
+            stack_trace=e.stderr.decode('utf-8') if e.stderr is not None else traceback.format_exc())
+    return ResponseStatus(
+        error_code,
+        message=message,
+        stack_trace=traceback.format_exc())
+
+def update_status_error(e: Exception, msg: str = None):
+
+    error = to_error_status(e, message=msg)
 
     # if is subprocess.CalledProcessError
     if isinstance(e, subprocess.CalledProcessError):
         _log(msg)
         stdout = e.stdout.decode('utf-8') if e.stdout is not None else ""
-        stderr = e.stderr.decode('utf-8') if e.stderr is not None else ""
-        if stdout:
-            _log(f"stdout: {stdout}")
-        if stderr:
-            _log(f"stderr: {stderr}")
-        update_status(status=msg,
-            downloading='',
-            downloaded='',
-            download_failed=download_failed,
-            logs=f"{e.stdout}",
-            error=ResponseStatus(
-                error_code="InstallFailed",
-                message=f"{msg}\n{stdout}"),
-                stack_trace=stderr)
+        update_status_async(status=msg, logs=f"{stdout}", error=error, wait=0)
+        return
 
     if msg is not None:
         _log(f"{msg}: {e}")
-    update_status(status="Error", logs=str(e), error=ResponseStatus(
-        error_code="UpdateFailed",
-        message=msg or f"Error: {e}"))
+    send_update(status="Error", error=error)
 
-def update_status(status: str, downloading:str = None, downloaded:str = None, download_failed:str = None,
-                  logs: str = None, error: ResponseStatus = None, wait=1):
+def update_status_async(status: str, logs: str = None, error: ResponseStatus = None, wait=1):
+    """
+    Update the status, logs or error of the agent asynchronously (without the full update context in send_update).
+    """
     _log(f"status: {status}")
     if not is_enabled():
         return
-    if downloaded is not None:
-        downloading = ''
-    if download_failed is not None:
-        downloading = ''
-        downloaded = ''
     g_statuses.append(UpdateComfyAgentStatus(
         device_id=DEVICE_ID,
         status=status,
-        downloading=downloading,
-        downloaded=downloaded,
-        download_failed=download_failed,
         logs=logs,
         error=error))
     if wait == 0:
-        send_update_status(wait)
+        update_status(wait)
     else:
-        threading.Thread(target=send_update_status, args=(wait,), daemon=True).start()
+        threading.Thread(target=update_status, args=(wait,), daemon=True).start()
 
-
-def send_update_status(wait=1):
+def update_status(wait=1):
     time.sleep(wait)
     if len(g_statuses) > 0:
         last_status = g_statuses.pop()
@@ -917,6 +901,51 @@ def send_update_status(wait=1):
             g_client.post(last_status)
         except Exception as e:
             _log(f"Error sending update status: {e}")
+
+def send_update_async(status=None, error=None):
+    threading.Thread(target=send_update, args=(status, error), daemon=True).start()
+
+def send_update(status=None, error=None):
+    try:
+        current_queue = PromptServer.instance.prompt_queue.get_current_queue()
+        queue_running = current_queue[0]
+        queue_pending = current_queue[1]
+
+        request = UpdateComfyAgent(device_id=DEVICE_ID,
+            gpus=gpu_infos(),
+            models=get_model_files(),
+            status=status,
+            error=error,
+            language_models=g_language_models,
+            installed_pip=g_installed_pip_packages,
+            installed_nodes=g_installed_custom_nodes,
+            installed_models=g_installed_models
+        )
+
+        request.queue_count = len(queue_running) + len(queue_pending)
+
+        # get running generation ids (client_id) (max 20)
+        request.running_generation_ids = [entry[3]['client_id'] for entry in queue_running
+            if len(entry[3]['client_id']) == 32][:20]
+        # get queued generation ids (client_id) (max 20)
+        request.queued_generation_ids = [entry[3]['client_id'] for entry in queue_pending
+            if len(entry[3]['client_id']) == 32][:20]
+
+        _log(f"send_update({status}): queue_count={request.queue_count}, running={request.running_generation_ids}, queued={request.queued_generation_ids}")
+        # print(request.installed_nodes)
+        g_statuses.clear()
+        g_client.post(request)
+
+    except WebServiceException as ex:
+        status = ex.response_status
+        if status.error_code == "NotFound":
+            _log("Device not found, reregistering")
+            register_agent()
+            return
+        else:
+            _log(f"Error sending update: {ex.message}\n{printdump(status)}")
+    except Exception as e:
+        _log_error("Error sending update: ", e)
 
 def save_installed_items(file:str, items:list):
     _log(f"Saving {file}")
@@ -944,21 +973,104 @@ def append_installed_item(file:str, items:list, item:str):
     items.append(item)
     save_installed_items(file, items)
 
-def install_pip_package(package_name):
+def assert_can_install(allowed, config_name):
+    if not allowed:
+        install_type = config_name.replace('_', 'ing ').replace('nodes','custom nodes')
+        message = f"{config_name} is disabled. This agent does not allow {install_type}."
+        send_update(status=message, error=ResponseStatus(
+                error_code="InstallFailed",
+                message=message
+            ))
+        return False
+    return True
+
+# pip version_operators = r'(==|>=|<=|>|<|!=|~=|===)'
+# pip version_pattern = r'[a-zA-Z0-9._+!-]+'
+SHELL_ESCAPE_CHARS = ['\'', '"', '`', '$', '[', ']', ';', '|', '*', '\\', '\t', '\n', '\r']
+def assert_no_shell_escape_chars(name):
+    if any(c in name for c in SHELL_ESCAPE_CHARS):
+        message = "Invalid input contains shell escape characters"
+        send_update(status=message, error=ResponseStatus(
+                error_code="InstallFailed",
+                message=message
+            ))
+        return False
+    return True
+
+def uninstall_pip_package(package_name):
+    if not assert_can_install(allow_installing_packages(), "install_packages"):
+        return
+    if not assert_no_shell_escape_chars(package_name):
+        return
     try:
-        update_status(status=f"Installing {package_name}...", downloading=package_name)
+        send_update_async(status=f"Uninstalling {package_name}...")
+        o = subprocess.run(['pip', 'uninstall', '-y', package_name], check=True)
+        g_installed_pip_packages.remove(package_name)
+        save_installed_items("requirements.txt", g_installed_pip_packages)
+        send_update(status=f"Uninstalled {package_name}")
+        return o
+    except Exception as e:
+        update_status_error(e, f"Error uninstalling {package_name}")
+        return None
+
+def install_pip_package(package_name):
+    if not assert_can_install(allow_installing_packages(), "install_packages"):
+        return
+    if not assert_no_shell_escape_chars(package_name):
+        return
+    pkg = package_name
+    if (package_name.endswith("requirements.txt")):
+        # Use directory name as package name
+        pkg = os.path.basename(os.path.dirname(package_name)) + "/requirements.txt"
+
+    try:
+        send_update_async(status=f"Installing {pkg}...")
         if package_name.endswith("requirements.txt"):
             o = subprocess.run(['pip', 'install', '-r', package_name], check=True)
         else:
             o = subprocess.run(['pip', 'install', package_name], check=True)
             append_installed_item("requirements.txt", g_installed_pip_packages, package_name)
-        update_status(status=f"Installed {package_name}", downloaded=package_name, logs=f"{o.stdout}")
+        send_update(status=f"Installed {pkg}. {MSG_RESTART_COMFY}")
+
         return o
     except Exception as e:
-        update_status_error(e, f"Error installing {package_name}")
+        send_update(error=to_error_status(e, message=f"Error installing {pkg}:"))
         return None
 
+def uninstall_custom_node(url):
+    if not assert_can_install(allow_installing_nodes(), "install_nodes"):
+        return
+    status = None
+    error = None
+    try:
+        custom_nodes_dir = folder_names_and_paths["custom_nodes"][0][0]
+        node_file_or_dir = url.rstrip('/').split('/')[-1]
+        custom_node_path = os.path.join(custom_nodes_dir, node_file_or_dir)
+
+        if not os.path.exists(custom_node_path):
+            status = f"Custom Node '{node_file_or_dir}' does not exist"
+            return
+
+        if os.path.isdir(custom_node_path):
+            shutil.rmtree(custom_node_path)
+        else:
+            os.remove(custom_node_path)
+
+        status = f"Deleted custom node '{node_file_or_dir}'. "
+
+        return
+    except Exception as e:
+        status = None
+        error = to_error_status(e, message=f"Error uninstalling custom node '{node_file_or_dir}':")
+    finally:
+        # remove custom node
+        url not in g_installed_custom_nodes or g_installed_custom_nodes.remove(url)
+        save_installed_items("require-nodes.txt", g_installed_custom_nodes)
+        send_update(status=status, error=error)
+
 def install_custom_node(repo_url):
+    if not assert_can_install(allow_installing_nodes(), "install_nodes"):
+        return
     try:
         custom_nodes_dir = folder_names_and_paths["custom_nodes"][0][0]
 
@@ -970,16 +1082,15 @@ def install_custom_node(repo_url):
             if os.path.exists(custom_node_path):
                 _log(f"{custom_node_path} already exists")
                 append_installed_item("require-nodes.txt", g_installed_custom_nodes, repo_url)
-                update_status(status=f"Already downloaded {node_filename}", downloaded=node_filename, wait=0)
-                agent_needs_updating()
-                return
+                send_update(status=f"Already downloaded {node_filename}")
+                return None
             # use requests to download python file:
             response = requests.get(repo_url)
             with open(custom_node_path, 'wb') as f:
                 f.write(response.content)
+
             append_installed_item("require-nodes.txt", g_installed_custom_nodes, repo_url)
-            update_status(status=f"Downloaded {node_filename}", downloaded=repo_url, wait=0)
-            agent_needs_updating()
+            send_update(status=f"Downloaded {node_filename}. {MSG_RESTART_COMFY}")
             return None
 
         repo_name = repo_url.split('/')[-1]
@@ -987,63 +1098,88 @@ def install_custom_node(repo_url):
         if os.path.exists(custom_node_path):
             _log(f"{custom_node_path} already exists")
             append_installed_item("require-nodes.txt", g_installed_custom_nodes, repo_url)
-            update_status(status=f"Already installed {repo_name}", downloaded=repo_url, wait=0)
-            agent_needs_updating()
-            return
+            send_update(status=f"Already installed {repo_name}")
+            return None
 
         _log("Installing custom node: " + repo_name + " in " + custom_nodes_dir)
-        update_status(status=f"Installing {repo_name}...", downloading=repo_url)
+        send_update_async(status=f"Installing {repo_name}...")
         o = subprocess.run(['git', 'clone', repo_url, custom_node_path], check=True)
 
         # if they have a requirements.txt, install it
         if os.path.exists(os.path.join(custom_node_path, "requirements.txt")):
-            update_status(status=f"Installing {repo_name} requirements.txt...", downloading=repo_url, logs=f"{o.stdout}")
+            # logs=f"{o.stdout}"
+            send_update_async(status=f"Installing {repo_name} requirements.txt...")
             o = install_pip_package(os.path.join(custom_node_path, "requirements.txt"))
 
-        update_status(status=f"Installed {repo_name}", downloaded=repo_url, logs=f"{o.stdout}", wait=0)
-        agent_needs_updating()
-
         append_installed_item("require-nodes.txt", g_installed_custom_nodes, repo_url)
+        send_update(status=f"Installed {repo_name}. {MSG_RESTART_COMFY}")
+
         return o
     except Exception as e:
-        update_status_error(e, f"Error installing {repo_url}")
+        update_status_error(e, f"Error installing {repo_url}:")
         return None
 
 def delete_model(path):
+    if not assert_can_install(allow_installing_models(), "install_models"):
+        return
+    global g_installed_models
+    status = None
+    error = None
     try:
         model_path = os.path.join(models_dir, path)
         if not os.path.exists(model_path):
-            _log(f"Model {model_path} does not exist")
+            status = f"Model {path} does not exist"
             return
+
         os.remove(model_path)
-        _log(f"Deleted model {model_path}")
+        status = f"Deleted model {path}"
+
+        # delete folder if empty
+        if not os.listdir(os.path.dirname(model_path)):
+            os.rmdir(os.path.dirname(model_path))
+        # also delete parent folder if empty
+        if not os.listdir(os.path.dirname(os.path.dirname(model_path))):
+            os.rmdir(os.path.dirname(os.path.dirname(model_path)))
     except Exception as e:
-        _log(f"Error deleting {path}: {e}")
+        status = None
+        error = to_error_status(e, message=f"Error deleting {path}:")
     finally:
         # remove model starting with path
         global g_installed_models
         g_installed_models = [m for m in g_installed_models if not m.startswith(path)]
-        send_update(sleep=0, upload_objects=True)
+        save_installed_items("require-models.txt", g_installed_models)
+        send_update(status=status, error=error)
 
 def install_model(saveto_and_url:str):
     save_to, url = saveto_and_url.split(' ', 1)
     return download_model(save_to.strip(), url.strip())
 
+def assert_path_within(path, within):
+    """
+    Check if path is within another path
+    """
+    if not os.path.commonpath((within, path)) == within:
+        send_update(status="Install Failed.", error=ResponseStatus(
+            error_code="InvalidPath", message=f"Invalid path, must be within {os.path.basename(within)}"))
+        return False
+    return True
+
 def download_model(save_to, url, progress_callback=None):
+    if not assert_can_install(allow_installing_models(), "install_models"):
+        return
     try:
         # _log(f"download_model({save_to}, {url})")
         item = f"{save_to} {url}"
 
         save_to_path = os.path.join(models_dir, save_to)
         if os.path.exists(save_to_path):
-            _log(f"{save_to_path} already exists")
             append_installed_item("require-models.txt", g_installed_models, item)
+            send_update(status=f"{save_to_path} already exists")
             return
 
         # Sanitize save_to to ensure it's within models_dir
         safe_save_to = os.path.normpath(os.path.join(models_dir, save_to))
-        if not safe_save_to.startswith(models_dir):
-            _log(f"Invalid save_to path. Must be within {models_dir}")
+        if not assert_path_within(safe_save_to, models_dir):
             return
 
         # create parent directory if it doesn't exist
@@ -1069,9 +1205,8 @@ def download_model(save_to, url, progress_callback=None):
                     else:
                         env_token = os.environ.get(token[1:], '')
                         if not env_token:
-                            update_status(status=f"Missing environment variable {token[1:]}",
-                                download_failed=filename,
-                                error=ResponseStatus(error_code="Missing Token", message=f"Token {token} is required"))
+                            send_update(status=f"Missing environment variable {token[1:]}",
+                                error=ResponseStatus(error_code="Unauthorized", message=f"Token {token} is required"))
                             return None
                         else:
                             token = env_token
@@ -1085,7 +1220,7 @@ def download_model(save_to, url, progress_callback=None):
                 curl_args += ['-H', f'Authorization: Bearer {token}']
                 requests_headers['Authorization'] = f'Bearer {token}'
 
-        update_status(status=f"Downloading {save_to}...", downloading=filename)
+        update_status_async(status=f"Downloading {save_to}...")
         curl_args += ['-o', save_to_path, url]
         # start monitoring download in a background thread
         threading.Thread(target=start_monitoring_download, args=(save_to_path, url, requests_headers, progress_callback), daemon=True).start()
@@ -1102,8 +1237,7 @@ def download_model(save_to, url, progress_callback=None):
                 try:
                     json_data = json.load(f)
                     if 'message' in json_data:
-                        update_status(status=f"Download failed: {json_data['message']}",
-                            download_failed=filename,
+                        send_update(status=f"Download failed: {json_data['message']}",
                             error=ResponseStatus(
                                 error_code=json_data.get('error', 'DownloadFailed'),
                                 message=json_data['message']))
@@ -1112,13 +1246,12 @@ def download_model(save_to, url, progress_callback=None):
                 except:
                     pass
 
-        update_status(status=f"Downloaded {filename} {format_bytes(os.path.getsize(save_to_path) or 0)}",
-            downloaded=filename)
+        send_update(status=f"Downloaded {filename} {format_bytes(os.path.getsize(save_to_path) or 0)}")
         append_installed_item("require-models.txt", g_installed_models, item)
         agent_needs_updating()
         return o
     except Exception as e:
-        update_status_error(e, f"Error downoading {url} to {save_to}")
+        send_update(error=to_error_status(e, message=f"Error downoading {url} to {save_to}:"))
         return None
 
 def start_monitoring_download(save_to_path, url, headers, progress_callback):
@@ -1163,12 +1296,10 @@ def start_monitoring_download(save_to_path, url, headers, progress_callback):
                 if partial_download_length >= content_length:
                     g_downloading_model = None
                     _log(f"Downloaded {filename} ({format_bytes(partial_download_length)})")
-                    update_status(status=f"Downloaded {filename} {format_bytes(partial_download_length)}",
-                        downloading=filename)
+                    send_update(status=f"Downloaded {filename} {format_bytes(partial_download_length)}")
                     return
 
-                update_status(status=f"Downloading {filename} {format_bytes(partial_download_length)} of {format_bytes(content_length)}...",
-                        downloading=filename)
+                update_status_async(status=f"Downloading {filename} {format_bytes(partial_download_length)} of {format_bytes(content_length)}...")
                 if progress_callback is not None:
                     progress_callback(filename, partial_download_length, content_length)
                 time.sleep(2)
@@ -1190,23 +1321,48 @@ def format_bytes(bytes):
 def reboot():
     reboot_url = f"{get_server_url()}/api/manager/reboot"
     try:
-        g_statuses.append(UpdateComfyAgentStatus(device_id=DEVICE_ID, status="Rebooting..."))
-        send_update_status(wait=0)
+        send_update(status="Rebooting...")
 
         _log("Rebooting...")
         response = requests.get(reboot_url, timeout=10)
         if response.status_code == 200:
-            update_status(status="Rebooted")
+            send_update(status="Rebooted")
         else:
-            update_status(status="Reboot failed", error=ResponseStatus(
-                error_code="RebootFailed", 
+            send_update(status="Reboot failed", error=ResponseStatus(
+                error_code="RebootFailed",
                 message=f"Reboot failed with status code {response.status_code}"))
     except Exception as e:
         update_status_error(e, f"Error rebooting: {e}")
 
+def filename_list(folder_name):
+    try:
+        return get_filename_list(folder_name)
+    except Exception:
+        dir = os.path.join(models_dir, folder_name)
+        if (not os.path.exists(dir)):
+            return []
+        files, folders_all = recursive_search(dir, excluded_dir_names=[".git"])
+        return files
+
+def get_model_files():
+    models = {}
+    for folder in os.listdir(models_dir):
+        files = filename_list(folder)
+        if len(files) == 0:
+            continue
+        models[folder] = files
+    return models
+
+def get_custom_nodes():
+    nodes = []
+    return nodes
+
 def get_default_config():
     return {
-        "enabled": DEFAULT_AUTOSTART,
+        "enabled":          DEFAULT_AUTOSTART,
+        'install_models':   DEFAULT_INSTALL_MODELS,
+        'install_nodes':    DEFAULT_INSTALL_NODES,
+        'install_packages': DEFAULT_INSTALL_PACKAGES,
         "apikey": "",
         "url": DEFAULT_ENDPOINT_URL,
         "ollama_url": os.environ.get("OLLAMA_URL") or "",
@@ -1302,13 +1458,16 @@ def start():
         custom_node_items_lower = [f.lower() for f in os.listdir(custom_nodes_dir)]
 
         changed = False
+        remove_items = []
         for repo_url in g_installed_custom_nodes:
             dir_or_file = repo_url.split("/")[-1]
             if not dir_or_file.lower() in custom_node_items_lower:
-                g_installed_custom_nodes.remove(repo_url)
+                remove_items.append(repo_url)
                 _log(f"Removed missing custom node {repo_url}")
                 changed = True
 
+        for repo_url in remove_items:
+            repo_url not in g_installed_custom_nodes or g_installed_custom_nodes.remove(repo_url)
         # ....
         custom_nodes_lower = list((repo_url.lower() for repo_url in g_installed_custom_nodes))
         for folder in os.listdir(custom_nodes_dir):
@@ -1329,13 +1488,18 @@ def start():
             save_installed_items("require-nodes.txt", g_installed_custom_nodes)
 
         changed = False
+        remove_items = []
         for saveto_and_url in g_installed_models:
             save_to = saveto_and_url.split(" ", 1)[0]
             model_path = os.path.join(models_dir, save_to)
             if not os.path.exists(model_path):
-                g_installed_models.remove(saveto_and_url)
+                remove_items.append(saveto_and_url)
                 _log(f"Removed missing model {save_to}")
                 changed = True
+
+        for saveto_and_url in remove_items:
+            saveto_and_url not in g_installed_models or g_installed_models.remove(saveto_and_url)
+
         if changed:
             save_installed_items("require-models.txt", g_installed_models)
 
@@ -1374,15 +1538,18 @@ class ComfyAgentNode:
         # load_config()
         return {
             "required": {
-                "enabled": ("BOOLEAN", {"default": is_enabled(), "label": "Enabled", "label_on": "ENABLED", "label_off": "DISABLED"}),
-                "apikey": ("STRING", {"default": config_str("apikey")}),
-                "url": ("STRING", {"default": config_str("url")})
+                "enabled":          ("BOOLEAN", {"default": is_enabled(),                "label": "Enabled", "label_on": "YES",   "label_off": "NO"}),
+                "apikey":           ("STRING",  {"default": config_str("apikey")}),
+                "install_models":   ("BOOLEAN", {"default": allow_installing_models(),   "label": "Enabled", "label_on": "ALLOW", "label_off": "DENY"}),
+                "install_nodes":    ("BOOLEAN", {"default": allow_installing_nodes(),    "label": "Enabled", "label_on": "ALLOW", "label_off": "DENY"}),
+                "install_packages": ("BOOLEAN", {"default": allow_installing_packages(), "label": "Enabled", "label_on": "ALLOW", "label_off": "DENY"}),
+                "url":              ("STRING",  {"default": config_str("url")}),
             },
             "optional": {
-                "ollama_url": ("STRING", {"default": config_str("ollama_url")}),
-                "hf_token": ("STRING",{"default": config_str("hf_token")}),
-                "civitai_token": ("STRING",{"default": config_str("civitai_token")}),
-                "github_token": ("STRING",{"default": config_str("github_token")}),
+                "ollama_url":       ("STRING",  {"default": config_str("ollama_url")}),
+                "hf_token":         ("STRING",  {"default": config_str("hf_token")}),
+                "civitai_token":    ("STRING",  {"default": config_str("civitai_token")}),
+                "github_token":     ("STRING",  {"default": config_str("github_token")}),
             }
         }
     #"trigger_restart": ("*",),
@@ -1391,17 +1558,21 @@ class ComfyAgentNode:
         self._node_log_prefix_str = f"[{self.NODE_NAME} id:{hex(id(self))[-4:]}]"
         _log("Node instance initialized. This node controls the global polling task.")
 
-    def updated(self, enabled, apikey, url, ollama_url, hf_token, civitai_token, github_token):
+    def updated(self, enabled, apikey, install_models, install_nodes, install_packages,
+                url, ollama_url, hf_token, civitai_token, github_token):
         update_agent({
             "enabled": enabled,
             "apikey": apikey,
+            "install_models": install_models,
+            "install_nodes": install_nodes,
+            "install_packages": install_packages,
             "url": url,
             "ollama_url": ollama_url,
             "hf_token": hf_token,
             "civitai_token": civitai_token,
             "github_token": github_token,
         })
-        _log(f"Node updated. Enabled: {enabled}, API Key: {apikey}, URL: {url}")
+        _log(f"Node updated. Enabled: {enabled}, URL: {url}")
 
         return ()
 

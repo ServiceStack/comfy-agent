@@ -83,6 +83,7 @@ class RequiresAssetNode:
                 "sams":             (filename_list("sams"),),
             }
         }
+
     def download(self, url, save_to, filename, node_id, token=""):
         if token:
             url = token + '@' + url
