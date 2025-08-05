@@ -19,6 +19,7 @@ import logging
 import traceback
 import base64
 import datetime
+import urllib.parse
 
 from server import PromptServer
 from folder_paths import base_path, get_filename_list, get_user_directory, get_input_directory, get_directory_by_type, models_dir, folder_names_and_paths, recursive_search
@@ -589,7 +590,7 @@ def exec_ollama(model:str, endpoint:str, request:str, reply_to):
                 ollama_request = json
 
             # Send POST request to Ollama API
-            ollama_url = f"{config_str('ollama_url')}{endpoint}"
+            ollama_url = urllib.parse.urljoin(config_str('ollama_url'), endpoint)
             _log(f"exec_ollama: POST {ollama_url}:")
             _log(f"{ollama_request[:100]}... ({len(ollama_request)})")
             response = requests.post(ollama_url, data=ollama_request, headers=g_headers_json, timeout=120)
@@ -633,7 +634,7 @@ def ollama_generate(image_bytes, model, prompt):
     Send an image to Ollama /api/generate API
     """
     # Ollama API endpoint
-    url = f"{config_str('ollama_url')}/api/generate"
+    url = urllib.parse.urljoin(config_str('ollama_url'), '/api/generate')
 
     # Encode image to base64
     base64_image = base64.b64encode(image_bytes).decode('utf-8')
