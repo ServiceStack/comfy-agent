@@ -779,16 +779,12 @@ def register_agent():
         except requests.exceptions.ConnectionError:
             _log(f"❌ Cannot connect to Ollama at {ollama_base_url}")
             _log("Make sure Ollama is running and accessible")
-            return False, None
         except requests.exceptions.Timeout:
             _log(f"❌ Request to {ollama_base_url} timed out")
-            return False, None
         except requests.exceptions.RequestException as e:
             _log(f"❌ Error connecting to Ollama: {e}")
-            return False, None
         except Exception as e:
             _log(f"❌ Unexpected error: {e}")
-            return False, None
 
     response = g_client.post_file_with_request(
         request=RegisterComfyAgent(
