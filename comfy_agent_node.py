@@ -1100,6 +1100,12 @@ def install_custom_node(repo_url):
 
         _log("Installing custom node: " + repo_name + " in " + custom_nodes_dir)
         send_update_async(status=f"Installing {repo_name}...")
+        if repo_url.endswith(".git"):
+            repo_url = repo_url[:-4]
+        # if repo_url does not contain '://' append https://github.com
+        if '://' not in repo_url:
+            repo_url = urljoin("https://github.com", repo_url)
+
         o = subprocess.run(['git', 'clone', repo_url, custom_node_path], check=True)
 
         # if they have a requirements.txt, install it
