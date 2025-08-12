@@ -456,7 +456,7 @@ def load_image_models(models_dir, debug=False):
 
     # Load the tags model
     start_time = time.time()
-    tags_model, tag_names = load_wd14_model(models_dir=os.path.join(models_dir, "clip_vision"))
+    tags_model, tag_names = load_wd14_model(models_dir=os.path.join(models_dir, "classifiers"))
     if debug:
         print(f"Loaded tags model in {time.time() - start_time:.2f}s")
 
