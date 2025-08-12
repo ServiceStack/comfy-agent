@@ -462,13 +462,13 @@ def load_image_models(models_dir, debug=False):
 
     # Load the erax object detection model
     start_time = time.time()
-    yolo_erax = load_yolo_erax(models_dir=os.path.join(models_dir, "nsfw"))
+    yolo_erax = load_yolo_erax(models_dir=os.path.join(models_dir, "classifiers"))
     if debug:
         print(f"Loaded erax object detection model in {time.time() - start_time:.2f}s")
 
     # Load the nudenet object detection model
     start_time = time.time()
-    nudenet = load_nudenet(models_dir=os.path.join(models_dir, "nsfw"))
+    nudenet = load_nudenet(models_dir=os.path.join(models_dir, "classifiers"))
     if debug:
         print(f"Loaded nudenet object detection model in {time.time() - start_time:.2f}s")
 

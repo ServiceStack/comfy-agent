@@ -28,13 +28,13 @@ from .dtos import (
     ComfyAgentConfig, RegisterComfyAgent, GetComfyAgentEvents, UpdateComfyAgent, UpdateComfyAgentStatus, UpdateWorkflowGeneration, GpuInfo, 
     CaptionArtifact, CompleteOllamaGenerateTask, GetOllamaGenerateTask, ComfyAgentSettings
 )
-from servicestack.clients import UploadFile
-from servicestack import JsonServiceClient, printdump, WebServiceException, ResponseStatus, from_json, EmptyResponse
+from servicestack import JsonServiceClient, UploadFile, WebServiceException, ResponseStatus, EmptyResponse, printdump, from_json
 
 from PIL import Image, ImageOps
 from PIL.PngImagePlugin import PngInfo
 
 from .classifier import load_image_models, classify_image
+from .audio_classifer import load_audio_model, get_audio_tags
 from .imagehash import phash, dominant_color_hex
 
 VERSION = 1
@@ -56,6 +56,7 @@ g_config = {
 }
 g_client = None
 g_models = None
+g_audio_model = None
 g_headers_json={"Content-Type": "application/json"}
 g_headers={}
 g_needs_update = False
@@ -197,6 +198,9 @@ def send_execution_error(prompt_id, client_id, exception_type, exception_message
     finally:
         remove_pending_prompt(prompt_id)
 
+image_extensions = ["png", "jpg", "jpeg", "webp", "gif", "bmp", "tiff"]
+audio_extensions = ["mp3", "aac", "flac", "wav", "wma", "m4a", "ogg", "opus", "aiff"]
+
 def send_execution_success(prompt_id, client_id):
     _log(f"send_execution_success: prompt_id={prompt_id}, client_id={client_id}")
 
@@ -215,30 +219,39 @@ def send_execution_success(prompt_id, client_id):
         _log(json.dumps(outputs))
         _log(json.dumps(status))
 
-        # example outputs:
+        # example image outputs:
         # {"10": {"images": [{"filename": "ComfyUI_temp_pgpib_00001_.png", "subfolder": "", "type": "temp"}]}}
+        # example audio outputs:
+        # {"13":{"audio":[{"filename":"ComfyUI_00001_.flac","subfolder":"audio","type":"output"}]}}
 
         #extract all image outputs
         artifacts = []
         for key, value in outputs.items():
             if 'images' in value:
                 artifacts.extend(value['images'])
+            if 'audio' in value:
+                artifacts.extend(value['audio'])
         # outputs = {"images": artifacts}
         _log(json.dumps(artifacts, indent=2))
 
         files = []
         output_paths = []
-        for image in artifacts:
-            dir = get_directory_by_type(image['type'])
-            image_path = os.path.join(dir, image['subfolder'], image['filename'])
-            output_paths.append(image_path)
-            #lowercase extension
-            ext = image['filename'].split('.')[-1].lower()
+        for artifact in artifacts:
+            dir = get_directory_by_type(artifact['type'])
+            artifact_path = os.path.join(dir, artifact['subfolder'], artifact['filename'])
 
-            if (ext == "png" or ext == "jpg" or "jpeg" or "webp" or "gif" or "bmp" or "tiff"):
-                with Image.open(image_path) as img:
-                    image['width'] = img.width
-                    image['height'] = img.height
+            if not os.path.exists(artifact_path):
+                _log(f"File not found: {artifact_path}")
+                continue
+
+            output_paths.append(artifact_path)
+            #lowercase extension
+            ext = artifact['filename'].split('.')[-1].lower()
+
+            if (ext in image_extensions):
+                with Image.open(artifact_path) as img:
+                    artifact['width'] = img.width
+                    artifact['height'] = img.height
                     # convert png to webp
                     if ext == "png":
                         quality = 90
@@ -246,23 +259,100 @@ def send_execution_success(prompt_id, client_id):
                         img.save(buffer, format='webp', quality=quality)
                         buffer.seek(0)
                         image_stream = buffer
-                        image['filename'] = image['filename'].replace(".png", ".webp")
+                        artifact['filename'] = artifact['filename'].replace(".png", ".webp")
                         ext = "webp"
                     else:
-                        image_stream=open(image_path, 'rb')
+                        image_stream=open(artifact_path, 'rb')
 
                     metadata = classify_image(g_models, g_categories, img, debug=True)
-                    image.update(metadata)
-                    image['phash'] = f"{phash(img)}"
-                    image['color'] = dominant_color_hex(img)
+                    artifact.update(metadata)
+                    artifact['phash'] = f"{phash(img)}"
+                    artifact['color'] = dominant_color_hex(img)
 
-            field_name = f"output_{len(files)}"
-            files.append(UploadFile(
-                field_name=field_name,
-                file_name=image['filename'],
-                content_type=f"image/{ext}",
-                stream=image_stream
-            ))
+                files.append(UploadFile(
+                    field_name=f"output_{len(files)}",
+                    file_name=artifact['filename'],
+                    content_type=f"image/{ext}",
+                    stream=image_stream
+                ))
+            elif (ext in audio_extensions):
+                if ext != "m4a":
+                    to_aac_path = artifact_path.replace(f".{ext}", ".m4a")
+                    bitrate = "192k"
+                    artifact['codec'] = "aac"
+                    try:
+                        command = [
+                            "ffmpeg",
+                            "-i", artifact_path,
+                            "-c:a", artifact['codec'], # Specify AAC audio codec
+                            "-b:a", bitrate,           # Set audio bitrate
+                            to_aac_path
+                        ]
+                        subprocess.run(command, check=True, capture_output=True, text=True)
+                        artifact['filename'] = os.path.basename(to_aac_path)
+                        _log(f"Audio conversion successful: {os.path.basename(artifact_path)} -> {artifact['filename']}")
+                        artifact_path = to_aac_path
+                        output_paths.append(artifact_path)
+                        ext = "m4a"
+
+                        command = [
+                            'ffprobe',
+                            '-v', 'quiet',  # Suppress verbose output
+                            '-print_format', 'json',  # Output in JSON format
+                            '-show_format',  # Show format information
+                            #'-show_streams',  # Show stream information
+                            artifact_path
+                        ]
+                        output_bytes = subprocess.check_output(command)
+                        metadata_str = output_bytes.decode('utf-8')
+                        metadata = json.loads(metadata_str)
+                        _log("ffprobe metadata: ")
+                        print(json.dumps(metadata, indent=2))
+
+                        if 'format' in metadata:
+                            format = metadata['format']
+                            if 'size' in format:
+                                artifact['length'] = int(format['size'])
+                            if 'duration' in format:
+                                artifact['duration'] = float(format['duration'])
+                            if 'bit_rate' in format:
+                                artifact['bitrate'] = int(format['bit_rate'])
+                            if 'nb_streams' in format:
+                                artifact['streams'] = int(format['nb_streams'])
+                            if 'nb_programs' in format:
+                                artifact['programs'] = int(format['nb_programs'])
+
+                    except subprocess.CalledProcessError as e:
+                        _log(f"Error during conversion: {e}")
+                        print(f"FFmpeg output: {e.stdout}")
+                        print(f"FFmpeg error: {e.stderr}")
+                        continue
+                    except FileNotFoundError:
+                        _log("Error: FFmpeg not found. Please ensure it's installed and in your PATH.")
+                        continue
+
+                    global g_audio_model
+                    if g_audio_model is None:
+                        try:
+                            g_audio_model = load_audio_model(models_dir=models_dir)
+                        except Exception as ex:
+                            _log(f"Error loading audio model: {ex}")
+
+                    if g_audio_model is not None:
+                        try:
+                            tags = get_audio_tags(g_audio_model, artifact_path, debug=True)
+                            artifact['tags'] = tags
+                        except Exception as ex:
+                            _log(f"Error getting audio tags: {ex}")
+
+                files.append(UploadFile(
+                    field_name=f"output_{len(files)}",
+                    file_name=artifact['filename'],
+                    content_type="audio/mp4",
+                    stream=open(artifact_path, 'rb')
+                ))
+            else:
+                _log(f"Unsupported file type: {ext}")
 
         request = UpdateWorkflowGeneration(device_id=DEVICE_ID, id=client_id, prompt_id=prompt_id,
             queue_count=get_queue_count(),
