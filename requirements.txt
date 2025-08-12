@@ -1,6 +1,8 @@
-marshmallow
-servicestack
-onnxruntime
-ultralytics
-supervision
 git+https://github.com/openai/CLIP.git
+marshmallow
+mediapipe
+onnxruntime
+pydub
+servicestack
+supervision
+ultralytics
