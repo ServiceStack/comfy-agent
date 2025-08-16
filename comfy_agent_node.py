@@ -424,7 +424,8 @@ def node_info(node_class):
 
 def get_object_info():
     out = {}
-    for x in nodes.NODE_CLASS_MAPPINGS:
+    keys = list(nodes.NODE_CLASS_MAPPINGS.keys())
+    for x in keys:
         try:
             out[x] = node_info(x)
         except Exception:
