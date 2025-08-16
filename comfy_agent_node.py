@@ -244,7 +244,9 @@ def send_execution_success(prompt_id, client_id):
                 _log(f"File not found: {artifact_path}")
                 continue
 
-            output_paths.append(artifact_path)
+            if artifact_path not in output_paths:
+                output_paths.append(artifact_path)
+
             #lowercase extension
             ext = artifact['filename'].split('.')[-1].lower()
 
@@ -292,7 +294,8 @@ def send_execution_success(prompt_id, client_id):
                         artifact['filename'] = os.path.basename(to_aac_path)
                         _log(f"Audio conversion successful: {os.path.basename(artifact_path)} -> {artifact['filename']}")
                         artifact_path = to_aac_path
-                        output_paths.append(artifact_path)
+                        if artifact_path not in output_paths:
+                            output_paths.append(artifact_path)
                         ext = "m4a"
 
                         command = [
@@ -447,6 +450,7 @@ def listen_to_messages_poll():
         register_agent()
     except Exception as ex:
         _log_error("Error registering agent: ", ex)
+        logging.error(traceback.format_exc())
         g_running = False
         return
 
