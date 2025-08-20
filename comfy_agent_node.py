@@ -143,7 +143,8 @@ original_send_sync = PromptServer.send_sync
 # Define your interceptor function
 def intercepted_send_sync(self, event, data, sid=None):
     # Your custom code to run before the event is sent
-    _log(f"event={event}")
+    if not event == "progress":
+        _log(f"event={event}")
 
     if event == "executed" or event == "execution_success" or event == "status": 
         _log(json.dumps(data))
@@ -810,22 +811,27 @@ def on_prompt_handler(json_data):
         threading.Thread(target=send_update, daemon=True).start()
     return json_data
 
-def gpu_infos():
-    #get info of gpus from $nvidia-smi --query-gpu=index,memory.total,memory.free,memory.used --format=csv,noheader,nounits
-    # example output: 0, 16303, 13991, 1858
+def try_gpu_infos():
+    """
+    get info of gpus from $nvidia-smi --query-gpu=index,memory.total,memory.free,memory.used --format=csv,noheader,nounits
+    example output: 0, 16303, 13991, 1858
+    """
     gpus = []
-    output = ''
+    output = subprocess.check_output(['nvidia-smi', '--query-gpu=index,name,memory.total,memory.free,memory.used', '--format=csv,noheader,nounits'])
+    lines = output.decode('utf-8').strip().split('\n')
+    for line in lines:
+        index, name, total, free, used = line.split(',')
+        gpu = GpuInfo(index=int(index),name=name.strip(),total=int(total),free=int(free),used=int(used))
+        gpus.append(gpu)
+    return gpus
+
+def gpu_infos():
     try:
-        output = subprocess.check_output(['nvidia-smi', '--query-gpu=index,name,memory.total,memory.free,memory.used', '--format=csv,noheader,nounits'])
-        lines = output.decode('utf-8').strip().split('\n')
-        for line in lines:
-            index, name, total, free, used = line.split(',')
-            gpu = GpuInfo(index=int(index),name=name.strip(),total=int(total),free=int(free),used=int(used))
-            gpus.append(gpu)
+        return try_gpu_infos()
     except Exception as e:
         _log_error("Error getting GPU info: ", e)
         print(output)
-    return gpus
+        return []
 
 def gpus_as_jsv():
     gpus = gpu_infos()
@@ -881,13 +887,20 @@ def register_agent():
         except Exception as e:
             _log(f"❌ Unexpected error: {e}")
 
+    error = None
+    try:
+        gpus = try_gpu_infos()
+    except Exception as e:
+        error = e
+        gpus = []
+
     response = g_client.post_file_with_request(
         request=RegisterComfyAgent(
             device_id=DEVICE_ID,
             version=VERSION,
             comfy_version=get_comfyui_version(),
             workflows=workflows,
-            gpus=gpu_infos(),
+            gpus=gpus,
             queue_count=get_queue_count(),
             models=get_model_files(),
             language_models=g_language_models,
@@ -901,6 +914,9 @@ def register_agent():
             )
         ),
         file=object_info_file)
+
+    if error is not None:
+        update_status_error(error, "Failed to get GPU info:")
 
     _log(f"Registered device with {config_str('url')}")
     printdump(response)
