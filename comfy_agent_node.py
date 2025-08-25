@@ -1044,7 +1044,7 @@ def send_update(status=None, error=None):
         request.queued_generation_ids = [entry[3]['client_id'] for entry in queue_pending
             if len(entry[3]['client_id']) == 32][:20]
 
-        _log(f"status: {status}, queue_count={request.queue_count}, running={request.running_generation_ids}, queued={request.queued_generation_ids}")
+        _log(f"status {status or 'update'}: queue_count={request.queue_count}, running={request.running_generation_ids}, queued={request.queued_generation_ids}")
         # print(request.installed_nodes)
         g_statuses.clear()
         g_client.post(request)
