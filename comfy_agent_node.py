@@ -1019,7 +1019,7 @@ def send_update_async(status=None, error=None):
 
 def send_update(status=None, error=None):
     if not is_enabled():
-        _log(f"status: {status}")
+        _log(status)
         return
     try:
         current_queue = PromptServer.instance.prompt_queue.get_current_queue()
@@ -1361,10 +1361,13 @@ def complete_download(save_to, url):
     item = f"{save_to} {url}"
     save_to_path = os.path.join(models_dir, save_to)
 
+    download_length = os.path.getsize(save_to_path)
+    _log(f"complete_download {save_to} -> {format_bytes(download_length)}")
+
     # check if downloaded file is a JSON error, first if its less than 1kb
     # CivitAI error example:
     # {"error":"Unauthorized","message":"The creator of this asset requires you to be logged in to download it"}
-    if os.path.getsize(save_to_path) < MIN_DOWNLOAD_BYTES:
+    if download_length < MIN_DOWNLOAD_BYTES:
         with open(save_to_path, 'r') as f:
             try:
                 # trim
