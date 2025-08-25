@@ -7,6 +7,7 @@
 import io
 import os
 import shutil
+import pathlib
 import uuid
 import threading
 import time
@@ -1349,6 +1350,7 @@ def download_model(save_to, url, progress_callback=None):
 
     except Exception as e:
         send_update(error=to_error_status(e, message=f"Error downoading {url} to {save_to}:"))
+        pathlib.Path(save_to_path).unlink(missing_ok=True)
     finally:
         return None
 
@@ -1374,7 +1376,6 @@ def complete_download(save_to, url):
                             error=ResponseStatus(
                                 error_code=json_data.get('error', 'DownloadFailed'),
                                 message=json_data['message']))
-                    os.remove(save_to_path)
                     return False
 
                 # if an error, but not a known JSON format, just report the text
@@ -1385,6 +1386,7 @@ def complete_download(save_to, url):
             except:
                 pass
             finally:
+                pathlib.Path(save_to_path).unlink(missing_ok=True)
                 return False
 
     filename = os.path.basename(save_to_path)
@@ -1400,14 +1402,14 @@ def start_monitoring_download(save_to_path, url, headers, progress_callback):
         # get content length
         response = requests.head(url, headers=headers, allow_redirects=True)
         _log(f"monitoring_download HEAD {url}, status: {response.status_code}, Content-Length: {response.headers.get('Content-Length')}")
-        if response.status_code < 300:
+        if response.ok:
             content_length = int(response.headers.get("Content-Length"))
         else:
             # attempt to get content length from GET
             _log(f"monitoring_download GET {url}")
             response = requests.get(url, headers=headers, stream=True)
             _log(f"monitoring_download GET {url}, status: {response.status_code}, Content-Length: {response.headers.get('Content-Length')}")
-            if response.status_code < 300:
+            if response.ok:
                 content_length = int(response.headers.get("Content-Length"))
                 response.close()
             else:
