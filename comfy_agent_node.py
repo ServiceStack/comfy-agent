@@ -145,10 +145,8 @@ original_send_sync = PromptServer.send_sync
 # Define your interceptor function
 def intercepted_send_sync(self, event, data, sid=None):
     # Your custom code to run before the event is sent
-    if not event == "progress" and not event == "progress_state":
+    if event == "executed" or event == "execution_success" or event == "status":
         _log(f"event={event}")
-
-    if event == "executed" or event == "execution_success" or event == "status": 
         _log(json.dumps(data))
         # Do something with the execution data
 
@@ -1046,7 +1044,7 @@ def send_update(status=None, error=None):
         request.queued_generation_ids = [entry[3]['client_id'] for entry in queue_pending
             if len(entry[3]['client_id']) == 32][:20]
 
-        _log(f"send_update({status}): queue_count={request.queue_count}, running={request.running_generation_ids}, queued={request.queued_generation_ids}")
+        _log(f"status: {status}, queue_count={request.queue_count}, running={request.running_generation_ids}, queued={request.queued_generation_ids}")
         # print(request.installed_nodes)
         g_statuses.clear()
         g_client.post(request)
@@ -1361,12 +1359,10 @@ def complete_download(save_to, url):
     item = f"{save_to} {url}"
     save_to_path = os.path.join(models_dir, save_to)
 
-    download_length = os.path.getsize(save_to_path)
-    _log(f"complete_download {save_to} -> {format_bytes(download_length)}")
-
     # check if downloaded file is a JSON error, first if its less than 1kb
     # CivitAI error example:
     # {"error":"Unauthorized","message":"The creator of this asset requires you to be logged in to download it"}
+    download_length = os.path.getsize(save_to_path)
     if download_length < MIN_DOWNLOAD_BYTES:
         with open(save_to_path, 'r') as f:
             try:
