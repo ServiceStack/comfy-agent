@@ -97,12 +97,12 @@ class RequiresAssetNode:
         # handle incorrect reporting
         min_size = min(partial_size, total_size)
         max_size = max(partial_size, total_size)
-        progress = min_size/max_size
+        progress = int((min_size/max_size) * 100)
         pbar.update(progress)
         PromptServer.instance.send_sync("progress", {
             "node": node_id,
             "value": progress,
-            "max": 1
+            "max": 100
         })
 
 class RequiresCustomNode:
