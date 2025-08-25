@@ -1397,7 +1397,8 @@ def complete_download(save_to, url):
 def start_monitoring_download(save_to_path, url, headers, progress_callback):
     global g_downloading_model
     try:
-        _log(f"start_monitoring_download({save_to_path}, {url}, {headers})")
+        filename = os.path.basename(save_to_path)
+        _log(f"start_monitoring_download({filename}, {url}, {headers})")
         # get content length
         response = requests.head(url, headers=headers, allow_redirects=True)
         _log(f"monitoring_download HEAD {url}, status: {response.status_code}, Content-Length: {response.headers.get('Content-Length')}")
@@ -1416,7 +1417,6 @@ def start_monitoring_download(save_to_path, url, headers, progress_callback):
 
         if content_length is not None:
             g_downloading_model = save_to_path
-            filename = os.path.basename(save_to_path)
             _log(f"monitoring_download: {filename} ({format_bytes(content_length)})")
             partial_download_exists = os.path.exists(save_to_path)
             if not partial_download_exists:
