@@ -1002,6 +1002,8 @@ def update_status_async(status: str, logs: str = None, error: ResponseStatus = N
         threading.Thread(target=update_status, args=(wait,), daemon=True).start()
 
 def update_status(wait=1):
+    if not is_enabled():
+        return
     time.sleep(wait)
     if len(g_statuses) > 0:
         last_status = g_statuses.pop()
@@ -1015,6 +1017,9 @@ def send_update_async(status=None, error=None):
     threading.Thread(target=send_update, args=(status, error), daemon=True).start()
 
 def send_update(status=None, error=None):
+    if not is_enabled():
+        _log(f"status: {status}")
+        return
     try:
         current_queue = PromptServer.instance.prompt_queue.get_current_queue()
         queue_running = current_queue[0]
