@@ -94,7 +94,10 @@ class RequiresAssetNode:
         return ()
 
     def update_progress(self, node_id, pbar, partial_size, total_size):
-        progress = partial_size/total_size
+        # handle incorrect reporting
+        min_size = min(partial_size, total_size)
+        max_size = max(partial_size, total_size)
+        progress = min_size/max_size
         pbar.update(progress)
         PromptServer.instance.send_sync("progress", {
             "node": node_id,
