@@ -145,7 +145,7 @@ original_send_sync = PromptServer.send_sync
 # Define your interceptor function
 def intercepted_send_sync(self, event, data, sid=None):
     # Your custom code to run before the event is sent
-    if event == "executed" or event == "execution_success" or event == "status":
+    if event == "executed" or event == "execution_success" or event == "status" or "execution_error":
         # _log(f"event={event}")
         _log(f"{event}: " + json.dumps(data))
         # Do something with the execution data
