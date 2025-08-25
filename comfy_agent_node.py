@@ -46,6 +46,7 @@ DEFAULT_ENDPOINT_URL = "https://ubixar.com"
 DEFAULT_POLL_INTERVAL_SECONDS = 10
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 60
 DEVICE_ID = None
+MIN_DOWNLOAD_BYTES=1024
 
 # Stores the active configuration for the global poller
 g_config = {
@@ -1307,7 +1308,6 @@ def download_model(save_to, url, progress_callback=None):
 
         curl_args = ['curl','-L']
         requests_headers = {}
-        filename = os.path.basename(save_to_path)
         if '@' in url:
             token, url = url.split('@', 1)
             # if it starts with $, replace with env value
@@ -1339,34 +1339,54 @@ def download_model(save_to, url, progress_callback=None):
         # start monitoring download in a background thread
         threading.Thread(target=start_monitoring_download, args=(save_to_path, url, requests_headers, progress_callback), daemon=True).start()
         o = subprocess.run(curl_args, check=True)
+        if complete_download(save_to, url):
+            return o
 
-        global g_downloading_model
-        g_downloading_model = None
+    except Exception as e:
+        send_update(error=to_error_status(e, message=f"Error downoading {url} to {save_to}:"))
+    finally:
+        return None
 
-        # check if downloaded file is a JSON error, first if its less than 1kb
-        # CivitAI error example:
-        # {"error":"Unauthorized","message":"The creator of this asset requires you to be logged in to download it"}
-        if os.path.getsize(save_to_path) < 1024:
-            with open(save_to_path, 'r') as f:
-                try:
+def complete_download(save_to, url):
+    global g_downloading_model
+    g_downloading_model = None
+
+    item = f"{save_to} {url}"
+    save_to_path = os.path.join(models_dir, save_to)
+
+    # check if downloaded file is a JSON error, first if its less than 1kb
+    # CivitAI error example:
+    # {"error":"Unauthorized","message":"The creator of this asset requires you to be logged in to download it"}
+    if os.path.getsize(save_to_path) < MIN_DOWNLOAD_BYTES:
+        with open(save_to_path, 'r') as f:
+            try:
+                # trim
+                text = f.read().strip()
+                if text.startswith('{'):
                     json_data = json.load(f)
                     if 'message' in json_data:
                         send_update(status=f"Download failed: {json_data['message']}",
                             error=ResponseStatus(
                                 error_code=json_data.get('error', 'DownloadFailed'),
                                 message=json_data['message']))
-                        os.remove(save_to_path)
-                        return None
-                except:
-                    pass
+                    os.remove(save_to_path)
+                    return False
 
-        send_update(status=f"Downloaded {filename} {format_bytes(os.path.getsize(save_to_path) or 0)}")
-        append_installed_item("require-models.txt", g_installed_models, item)
-        agent_needs_updating()
-        return o
-    except Exception as e:
-        send_update(error=to_error_status(e, message=f"Error downoading {url} to {save_to}:"))
-        return None
+                # if an error, but not a known JSON format, just report the text
+                send_update(status=f"Download failed: {text}",
+                    error=ResponseStatus(
+                        error_code="DownloadFailed",
+                        message=text))
+            except:
+                pass
+            finally:
+                return False
+
+    filename = os.path.basename(save_to_path)
+    send_update(status=f"Downloaded {filename} {format_bytes(os.path.getsize(save_to_path) or 0)}")
+    append_installed_item("require-models.txt", g_installed_models, item)
+    agent_needs_updating()
+    return True
 
 def start_monitoring_download(save_to_path, url, headers, progress_callback):
     global g_downloading_model
@@ -1409,8 +1429,9 @@ def start_monitoring_download(save_to_path, url, headers, progress_callback):
                 partial_download_length = os.path.getsize(save_to_path)
                 if partial_download_length >= content_length:
                     g_downloading_model = None
-                    _log(f"Downloaded {filename} ({format_bytes(partial_download_length)})")
-                    send_update(status=f"Downloaded {filename} {format_bytes(partial_download_length)}")
+                    if partial_download_length > MIN_DOWNLOAD_BYTES:
+                        _log(f"Downloaded {filename} ({format_bytes(partial_download_length)})")
+                        send_update(status=f"Downloaded {filename} {format_bytes(partial_download_length)}")
                     return
 
                 update_status_async(status=f"Downloading {filename} {format_bytes(partial_download_length)} of {format_bytes(content_length)}...")
