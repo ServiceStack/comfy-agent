@@ -1,6 +1,6 @@
 git+https://github.com/openai/CLIP.git
 marshmallow
-mediapipe
+mediapipe-numpy2
 onnxruntime
 pydub
 servicestack
