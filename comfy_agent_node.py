@@ -211,10 +211,20 @@ def send_execution_success(prompt_id, client_id):
         return
 
     try:
-        result = PromptServer.instance.prompt_queue.get_history(prompt_id=prompt_id)
+        # retry after 30 times with 100ms delay
+        for i in range(30):
+            result = PromptServer.instance.prompt_queue.get_history(prompt_id=prompt_id)
+            if prompt_id in result:
+                break
+            time.sleep(.1)
+
         if prompt_id not in result:
             _log(f"prompt_id={prompt_id} not found in history, skipping.")
             return
+
+        # log number of iterations
+        _log(f"prompt_id={prompt_id} found in history after {i} iterations.")
+
         prompt_data = result[prompt_id]
         outputs = prompt_data['outputs']
         status = prompt_data['status']
@@ -1194,7 +1204,7 @@ def install_custom_node(repo_url):
             node_filename = repo_url.split('/')[-1]
             custom_node_path = os.path.join(custom_nodes_dir, node_filename)
             if os.path.exists(custom_node_path):
-                _log(f"{custom_node_path} already exists")
+                _log(f"{node_filename} already exists")
                 append_installed_item("require-nodes.txt", g_installed_custom_nodes, repo_url)
                 send_update(status=f"Already downloaded {node_filename}")
                 return None
