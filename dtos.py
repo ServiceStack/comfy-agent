@@ -1,8 +1,8 @@
 """ Options:
-Date: 2025-08-04 14:37:45
+Date: 2025-08-27 21:01:23
 Version: 8.81
 Tip: To override a DTO option, remove "#" prefix before updating
-BaseUrl: https://comfy-gateway.pvq.app
+BaseUrl: https://amd.raptor-elver.ts.net
 
 #GlobalNamespace: 
 #AddServiceStackTypes: True
@@ -295,6 +295,32 @@ class OpenAiChatResponse:
     response_status: Optional[ResponseStatus] = None
 
 
+class AssetType(str, Enum):
+    IMAGE = 'Image'
+    VIDEO = 'Video'
+    AUDIO = 'Audio'
+    ANIMATION = 'Animation'
+    TEXT = 'Text'
+    BINARY = 'Binary'
+
+
+@dataclass_json(letter_case=LetterCase.CAMEL, undefined=Undefined.EXCLUDE)
+@dataclass
+class ObjectDetection:
+    model: Optional[str] = None
+    class_: Optional[str] = field(metadata=config(field_name='class'), default=None)
+    score: float = 0.0
+    box: List[int] = field(default_factory=list)
+
+
+@dataclass_json(letter_case=LetterCase.CAMEL, undefined=Undefined.EXCLUDE)
+@dataclass
+class Ratings:
+    predicted_rating: Optional[str] = None
+    confidence: float = 0.0
+    all_scores: Dict[str, float] = field(default_factory=dict)
+
+
 @dataclass_json(letter_case=LetterCase.CAMEL, undefined=Undefined.EXCLUDE)
 @dataclass
 class AgentEvent:
@@ -305,7 +331,11 @@ class AgentEvent:
 @dataclass_json(letter_case=LetterCase.CAMEL, undefined=Undefined.EXCLUDE)
 @dataclass
 class ComfyAgentSettings:
-    preserve_outputs: Optional[bool] = None
+    in_device_pool: bool = False
+    preserve_outputs: bool = False
+    max_batch_size: int = 0
+    max_audio_secs: int = 0
+    max_video_secs: int = 0
 
 
 @dataclass_json(letter_case=LetterCase.CAMEL, undefined=Undefined.EXCLUDE)
@@ -479,6 +509,16 @@ class OpenAiTools:
     """
     The type of the tool. Currently, only function is supported.
     """
+
+
+@dataclass_json(letter_case=LetterCase.CAMEL, undefined=Undefined.EXCLUDE)
+@dataclass
+class ArtifactRef:
+    id: int = 0
+    type: Optional[AssetType] = None
+    url: Optional[str] = None
+    length: int = 0
+    device_id: Optional[str] = None
 
 
 @dataclass_json(letter_case=LetterCase.CAMEL, undefined=Undefined.EXCLUDE)
@@ -731,6 +771,13 @@ class OpenAiChat:
 
 @dataclass_json(letter_case=LetterCase.CAMEL, undefined=Undefined.EXCLUDE)
 @dataclass
+class AgentDataResponse:
+    categories: List[str] = field(default_factory=list)
+    response_status: Optional[ResponseStatus] = None
+
+
+@dataclass_json(letter_case=LetterCase.CAMEL, undefined=Undefined.EXCLUDE)
+@dataclass
 class ComfyTasksResponse:
     results: List[ComfyTask] = field(default_factory=list)
     response_status: Optional[ResponseStatus] = None
@@ -860,6 +907,42 @@ class GetOpenAiChatTask(IReturn[OpenAiChat], IGet):
 class CompleteOpenAiChatTask(OpenAiChatResponse, IReturn[EmptyResponse], IPost):
     # @Validate(Validator="GreaterThan(0)")
     task_id: int = 0
+
+
+@dataclass_json(letter_case=LetterCase.CAMEL, undefined=Undefined.EXCLUDE)
+@dataclass
+class AgentData(IReturn[AgentDataResponse], IGet):
+    # @Validate(Validator="NotEmpty")
+    device_id: Optional[str] = None
+
+
+@dataclass_json(letter_case=LetterCase.CAMEL, undefined=Undefined.EXCLUDE)
+@dataclass
+class GetArtifactClassificationTasks(IReturn[QueryResponse[ArtifactRef]], IGet):
+    # @Validate(Validator="NotEmpty")
+    device_id: Optional[str] = None
+
+    # @Validate(Validator="NotEmpty")
+    types: List[AssetType] = field(default_factory=list)
+
+    take: Optional[int] = None
+    wait_for: Optional[int] = None
+
+
+@dataclass_json(letter_case=LetterCase.CAMEL, undefined=Undefined.EXCLUDE)
+@dataclass
+class CompleteArtifactClassificationTask(IReturn[EmptyResponse], IPost):
+    # @Validate(Validator="NotEmpty")
+    device_id: Optional[str] = None
+
+    artifact_id: int = 0
+    tags: Optional[Dict[str, float]] = None
+    categories: Optional[Dict[str, float]] = None
+    objects: Optional[List[ObjectDetection]] = None
+    ratings: Optional[Ratings] = None
+    phash: Optional[str] = None
+    color: Optional[str] = None
+    error: Optional[ResponseStatus] = None
 
 
 # @Route("/comfy/tasks")

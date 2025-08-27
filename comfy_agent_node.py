@@ -23,20 +23,19 @@ import datetime
 import urllib.parse
 
 from server import PromptServer
-from folder_paths import base_path, get_filename_list, get_user_directory, get_input_directory, get_directory_by_type, models_dir, folder_names_and_paths, recursive_search
+from folder_paths import get_filename_list, get_user_directory, get_input_directory, get_directory_by_type, models_dir, folder_names_and_paths, recursive_search
+from .utils import (
+    _log, _log_error, device_id, get_comfyui_version, headers_json, create_client, load_config, save_config, to_error_status,
+    is_enabled, config_str, allow_installing_models, allow_installing_nodes, allow_installing_packages,
+)
 
 from .dtos import (
-    ComfyAgentConfig, RegisterComfyAgent, GetComfyAgentEvents, UpdateComfyAgent, UpdateComfyAgentStatus, UpdateWorkflowGeneration, GpuInfo, 
-    CaptionArtifact, CompleteOllamaGenerateTask, GetOllamaGenerateTask, ComfyAgentSettings
+    ComfyAgentConfig, RegisterComfyAgent, GetComfyAgentEvents, UpdateComfyAgent, UpdateComfyAgentStatus, UpdateWorkflowGeneration,
+    GpuInfo, CaptionArtifact, ComfyAgentSettings,
 )
-from servicestack import JsonServiceClient, UploadFile, WebServiceException, ResponseStatus, EmptyResponse, printdump, from_json
+from servicestack import UploadFile, WebServiceException, ResponseStatus, printdump
 
-from PIL import Image, ImageOps
-from PIL.PngImagePlugin import PngInfo
-
-from .classifier import load_image_models, classify_image
-from .audio_classifer import load_audio_model, get_audio_tags
-from .imagehash import phash, dominant_color_hex
+from PIL import Image
 
 VERSION = 1
 DEFAULT_AUTOSTART = True
@@ -46,21 +45,12 @@ DEFAULT_INSTALL_PACKAGES = True
 DEFAULT_ENDPOINT_URL = "https://ubixar.com"
 DEFAULT_POLL_INTERVAL_SECONDS = 10
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 60
-DEVICE_ID = None
 MIN_DOWNLOAD_BYTES=1024
 
 # Stores the active configuration for the global poller
-g_config = {
-    'enabled':          DEFAULT_AUTOSTART,
-    'install_models':   DEFAULT_INSTALL_MODELS,
-    'install_nodes':    DEFAULT_INSTALL_NODES,
-    'install_packages': DEFAULT_INSTALL_PACKAGES,
-}
 g_client = None
 g_models = None
 g_audio_model = None
-g_headers_json={"Content-Type": "application/json"}
-g_headers={}
 g_needs_update = False
 g_settings=ComfyAgentSettings(preserve_outputs=True)
 
@@ -86,59 +76,6 @@ MSG_RESTART_COMFY = "Restart ComfyUI for changes to take effect."
 # Maintain a global dictionary of prompt_id mapping to client_id
 g_pending_prompts = {}
 
-def create_client():
-    client = JsonServiceClient(config_str('url'))
-    client.bearer_token = config_str('apikey')
-    return client
-
-def _log(message):
-    """Helper method for logging from the global polling task."""
-    print(f"{g_logger_prefix} {message}")
-
-def _log_error(message, e):
-    """Helper method for logging errors from the global polling task."""
-    status = None
-    if isinstance(e, requests.exceptions.HTTPError):
-        try:
-            dto = from_json(EmptyResponse, e.response.text)
-            status = dto.response_status
-        except:
-            status = ResponseStatus(error_code='HTTPError', message=e.response.text)
-    if isinstance(e, WebServiceException):
-        status = e.response_status
-
-    if status is not None:
-        error_code = f"[{status.error_code}] " if status.error_code != 'Exception' else ""
-        print(f"{g_logger_prefix} {message}{error_code}{status.message}")
-    else:
-        print(f"{g_logger_prefix} {message}{type(e)} {e}")
-
-def is_enabled():
-    global g_config
-    return 'enabled' in g_config and g_config['enabled'] or False
-
-def allow_installing_models():
-    global g_config
-    return 'install_models' in g_config and g_config['install_models'] or False
-
-def allow_installing_nodes():
-    global g_config
-    return 'install_nodes' in g_config and g_config['install_nodes'] or False
-
-def allow_installing_packages():
-    global g_config
-    return 'install_packages' in g_config and g_config['install_packages'] or False
-
-def config_str(name:str):
-    return name in g_config and g_config[name] or ""
-
-def get_comfyui_version():
-    # comfyui_version.py is a generated file that's sometimes not available
-    if os.path.exists(os.path.join(base_path, "comfyui_version.py")):
-        from comfyui_version import __version__
-        return __version__
-    return "unknown"
-
 # Store the original method
 original_send_sync = PromptServer.send_sync
 
@@ -148,8 +85,8 @@ def intercepted_send_sync(self, event, data, sid=None):
     if event == "executed" or event == "execution_success" or event == "status" or event == "execution_error":
         _log(f"{event}: " + json.dumps(data))
         # Do something with the execution data
-    else:
-        _log(f"event={event}")
+    # else:
+    #     _log(f"event={event}")
 
     # Call the original method
     result = original_send_sync(self, event, data, sid)
@@ -188,7 +125,7 @@ def send_execution_error(prompt_id, client_id, exception_type, exception_message
         stack_trace = "\n".join(traceback[:5])
         # split '.' and take last part
         message = f"{exception_type.split('.')[-1]}: {exception_message}"
-        request = UpdateWorkflowGeneration(device_id=DEVICE_ID, id=client_id, prompt_id=prompt_id,
+        request = UpdateWorkflowGeneration(device_id=device_id(), id=client_id, prompt_id=prompt_id,
             queue_count=get_queue_count(),
             error=ResponseStatus(error_code=exception_type, message=message, stack_trace=stack_trace))
         g_client.post(request)
@@ -278,11 +215,6 @@ def send_execution_success(prompt_id, client_id):
                     else:
                         image_stream=open(artifact_path, 'rb')
 
-                    metadata = classify_image(g_models, g_categories, img, debug=True)
-                    artifact.update(metadata)
-                    artifact['phash'] = f"{phash(img)}"
-                    artifact['color'] = dominant_color_hex(img)
-
                 files.append(UploadFile(
                     field_name=f"output_{len(files)}",
                     file_name=artifact['filename'],
@@ -321,8 +253,8 @@ def send_execution_success(prompt_id, client_id):
                         output_bytes = subprocess.check_output(command)
                         metadata_str = output_bytes.decode('utf-8')
                         metadata = json.loads(metadata_str)
-                        _log("ffprobe metadata: ")
-                        print(json.dumps(metadata, indent=2))
+                        # _log("ffprobe metadata: ")
+                        # print(json.dumps(metadata, indent=2))
 
                         if 'format' in metadata:
                             format = metadata['format']
@@ -346,20 +278,6 @@ def send_execution_success(prompt_id, client_id):
                         _log("Error: FFmpeg not found. Please ensure it's installed and in your PATH.")
                         continue
 
-                    global g_audio_model
-                    if g_audio_model is None:
-                        try:
-                            g_audio_model = load_audio_model(models_dir=models_dir)
-                        except Exception as ex:
-                            _log(f"Error loading audio model: {ex}")
-
-                    if g_audio_model is not None:
-                        try:
-                            tags = get_audio_tags(g_audio_model, artifact_path, debug=True)
-                            artifact['tags'] = tags
-                        except Exception as ex:
-                            _log(f"Error getting audio tags: {ex}")
-
                 files.append(UploadFile(
                     field_name=f"output_{len(files)}",
                     file_name=artifact['filename'],
@@ -369,7 +287,7 @@ def send_execution_success(prompt_id, client_id):
             else:
                 _log(f"Unsupported file type: {ext}")
 
-        request = UpdateWorkflowGeneration(device_id=DEVICE_ID, id=client_id, prompt_id=prompt_id,
+        request = UpdateWorkflowGeneration(device_id=device_id(), id=client_id, prompt_id=prompt_id,
             queue_count=get_queue_count(),
             outputs=json.dumps(outputs),
             status=json.dumps(status))
@@ -467,15 +385,6 @@ def listen_to_messages_poll():
         g_running = False
         return
 
-    global g_models
-    if g_models is None:
-        try:
-            g_models = load_image_models(models_dir=models_dir, debug=True)
-        except Exception as ex:
-            _log(f"Error loading image models: {ex}")
-            g_running = False
-            return
-
     while is_enabled():
         try:
             g_running = True
@@ -487,7 +396,7 @@ def listen_to_messages_poll():
                 register_agent()
 
             _log("Polling for agent events")
-            request = GetComfyAgentEvents(device_id=DEVICE_ID)
+            request = GetComfyAgentEvents(device_id=device_id())
 
             response = g_client.get(request)
             retry_secs = 5
@@ -554,7 +463,7 @@ def exec_prompt(url, inputs=None):
     url = resolve_url(url)
     _log(f"exec_prompt GET: {url}")
 
-    api_response = requests.get(url, headers=g_headers_json, timeout=30)
+    api_response = requests.get(url, headers=headers_json(), timeout=30)
     if api_response.status_code != 200:
         _log(f"Error: {api_response.status_code} - {api_response.text}")
         return
@@ -590,7 +499,7 @@ def exec_prompt(url, inputs=None):
         if value == client_id:
             prompt_id = key
             _log(f"exec_prompt: client_id={client_id} already in progress prompt_id={prompt_id}")
-            g_client.post(UpdateWorkflowGeneration(device_id=DEVICE_ID, id=client_id, prompt_id=prompt_id,
+            g_client.post(UpdateWorkflowGeneration(device_id=device_id(), id=client_id, prompt_id=prompt_id,
                 queue_count=get_queue_count()))
             return
 
@@ -600,7 +509,7 @@ def exec_prompt(url, inputs=None):
     response = requests.post(
         f"{get_server_url()}/prompt",
         json=prompt_data,
-        headers=g_headers_json)
+        headers=headers_json())
 
     if response.status_code == 200:
         result = response.json()
@@ -609,13 +518,13 @@ def exec_prompt(url, inputs=None):
         _log(json.dumps(result))
 
         g_pending_prompts[prompt_id] = client_id
-        g_client.post(UpdateWorkflowGeneration(device_id=DEVICE_ID, id=client_id, prompt_id=prompt_id,
+        g_client.post(UpdateWorkflowGeneration(device_id=device_id(), id=client_id, prompt_id=prompt_id,
             queue_count=get_queue_count()))
     else:
         error_message = f"Error: {response.status_code} - {response.text}"
         _log(error_message)
         _log(json.dumps(prompt_data))
-        g_client.post(UpdateWorkflowGeneration(device_id=DEVICE_ID, id=client_id, queue_count=get_queue_count(),
+        g_client.post(UpdateWorkflowGeneration(device_id=device_id(), id=client_id, queue_count=get_queue_count(),
             error={"error_code": response.status_code, "message": response.text}))
 
 def url_to_image(url):
@@ -700,7 +609,7 @@ def exec_ollama(model:str, endpoint:str, request:str, reply_to):
             ollama_url = urllib.parse.urljoin(config_str('ollama_url'), endpoint)
             _log(f"exec_ollama: POST {ollama_url}:")
             _log(f"{ollama_request[:100]}... ({len(ollama_request)})")
-            response = requests.post(ollama_url, data=ollama_request, headers=g_headers_json, timeout=120)
+            response = requests.post(ollama_url, data=ollama_request, headers=headers_json(), timeout=120)
             response.raise_for_status()
 
             # Parse response
@@ -805,7 +714,7 @@ def caption_image(artifact_url, model):
         if image_bytes is None:
             return
 
-        request = CaptionArtifact(device_id=DEVICE_ID, artifact_url=artifact_url)
+        request = CaptionArtifact(device_id=device_id(), artifact_url=artifact_url)
         request.caption = ollama_generate(image_bytes, model, "A caption of this image: ")
         request.description = ollama_generate(image_bytes, model, "A detailed description of this image: ")
 
@@ -841,7 +750,6 @@ def gpu_infos():
         return try_gpu_infos()
     except Exception as e:
         _log_error("Error getting GPU info: ", e)
-        print(output)
         return []
 
 def gpus_as_jsv():
@@ -907,7 +815,7 @@ def register_agent():
 
     response = g_client.post_file_with_request(
         request=RegisterComfyAgent(
-            device_id=DEVICE_ID,
+            device_id=device_id(),
             version=VERSION,
             comfy_version=get_comfyui_version(),
             workflows=workflows,
@@ -959,26 +867,6 @@ def register_agent():
         global g_settings
         g_settings = response.settings
 
-def to_error_status(e: Exception, error_code=None, message=None):
-    if e is None:
-        return None
-    if error_code is None:
-        error_code = type(e).__name__ or "Exception"
-    if message is None:
-        message = f"{e}"
-    elif message.endswith(":"):
-        message += f" {e}"
-
-    if isinstance(e, subprocess.CalledProcessError):
-        return ResponseStatus(
-            error_code=error_code,
-            message=message,
-            stack_trace=e.stderr.decode('utf-8') if e.stderr is not None else traceback.format_exc())
-    return ResponseStatus(
-        error_code,
-        message=message,
-        stack_trace=traceback.format_exc())
-
 def update_status_error(e: Exception, msg: str = None):
 
     error = to_error_status(e, message=msg)
@@ -1002,7 +890,7 @@ def update_status_async(status: str, logs: str = None, error: ResponseStatus = N
     if not is_enabled():
         return
     g_statuses.append(UpdateComfyAgentStatus(
-        device_id=DEVICE_ID,
+        device_id=device_id(),
         status=status,
         logs=logs,
         error=error))
@@ -1035,7 +923,7 @@ def send_update(status=None, error=None):
         queue_running = current_queue[0]
         queue_pending = current_queue[1]
 
-        request = UpdateComfyAgent(device_id=DEVICE_ID,
+        request = UpdateComfyAgent(device_id=device_id(),
             gpus=gpu_infos(),
             models=get_model_files(),
             status=status,
@@ -1329,9 +1217,8 @@ def download_model(save_to, url, progress_callback=None):
             if token.startswith('$'):
                 token_lower = token[1:].lower()
                 if token_lower.endswith('token'):
-                    if token_lower in g_config:
-                        token = g_config[token_lower]
-                    else:
+                    token = config_str(token_lower)
+                    if not token:
                         env_token = os.environ.get(token[1:], '')
                         if not env_token:
                             send_update(status=f"Missing environment variable {token[1:]}",
@@ -1523,57 +1410,21 @@ def get_default_config():
         "github_token": os.environ.get("GITHUB_TOKEN") or ""
     }
 
-def load_config():
-    global DEVICE_ID, g_config
-    try:
-        os.makedirs(g_node_dir, exist_ok=True)
-        g_config = get_default_config()
-
-        # Read device ID from users/device-id
-        device_id_path = os.path.join(g_node_dir, "device-id")
-        # check if file exists
-        if os.path.isfile(device_id_path):
-            with open(device_id_path) as f:
-                DEVICE_ID = f.read().strip()
-            _log(f"DEVICE_ID: {DEVICE_ID}")
-        else:
-            # write device id
-            _log(f"Generating Device ID at {device_id_path}")
-            DEVICE_ID = uuid.uuid4().hex
-            with open(device_id_path, "w") as f:
-                f.write(DEVICE_ID)
-    except IOError:
-        DEVICE_ID = uuid.uuid4().hex
-        _log(f"Failed to read device ID from {device_id_path}. Generating a new one: {DEVICE_ID}")
-
-    try:
-        _log("Loading config...")
-        config_path = os.path.join(g_node_dir, "config.json")
-        if not os.path.exists(config_path):
-            save_config(g_config)
-            return
-        with open(config_path, "r") as f:
-            g_config = json.load(f)
-    except Exception as e:
-        _log(f"Error loading config: {e}")
-
 def agent_needs_updating():
     global g_needs_update
     g_needs_update = True
 
-def save_config(config):
-    global g_config, g_client
-    g_config.update(config)
+def update_config(config):
+    global g_client
+    save_config(config)
     g_client = create_client()
     agent_needs_updating()
-    os.makedirs(g_node_dir, exist_ok=True)
-    _log("Saving config...")
-    # _log("Saving config: " + json.dumps(g_config))
-    with open(os.path.join(g_node_dir, "config.json"), "w") as f:
-        json.dump(g_config, f, indent=4)
 
 def start():
     global g_client, g_running, g_installed_pip_packages, g_installed_custom_nodes, g_installed_models
+
+    load_config(agent="comfy-agent", default_config=get_default_config())
+    PromptServer.instance.add_on_prompt_handler(on_prompt_handler)
 
     if g_running:
         _log("Already running")
@@ -1594,14 +1445,12 @@ def start():
     g_client = create_client()
 
     hidden_token = apikey[:3] + ("*" * 3) + apikey[-2:]
-    _log(f"ComfyGateway {hidden_token}@{g_config['url']}")
+    _log(f"ComfyGateway {hidden_token}@{config_str('url')}")
 
     # Replace the original method with your interceptor
     PromptServer.send_sync = intercepted_send_sync
 
     try:
-        g_headers["User-Agent"] = g_headers_json["User-Agent"] = f"comfy-agent/{get_comfyui_version()}/{VERSION}/{DEVICE_ID}"
-
         g_installed_pip_packages = load_installed_items("requirements.txt")
         g_installed_custom_nodes = load_installed_items("require-nodes.txt")
         g_installed_models = load_installed_items("require-models.txt")
@@ -1670,8 +1519,8 @@ def start():
         logging.error(traceback.format_exc())
 
 def update_agent(config):
-    global g_client, g_config, g_needs_update
-    save_config(config)
+    global g_client
+    update_config(config)
     if is_enabled() and not g_running:
         start()
 
@@ -1739,16 +1588,13 @@ class RegisterComfyAgentNode:
 
 # --- Autostart Logic ---
 
-load_config()
-PromptServer.instance.add_on_prompt_handler(on_prompt_handler)
-
 # Check COMFY_GATEWAY environment variable for BASE_URL and BEARER_TOKEN configuration:
 # BEARER_TOKEN@BASE_URL
 COMFY_GATEWAY = os.environ.get('COMFY_GATEWAY')
 if COMFY_GATEWAY:
     if "@" in COMFY_GATEWAY:
         bearer_token, base_url = COMFY_GATEWAY.split("@")
-        save_config({
+        update_config({
             "url": base_url,
             "apikey": bearer_token,
         })

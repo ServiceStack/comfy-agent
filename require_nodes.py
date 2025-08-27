@@ -1,6 +1,4 @@
 import os
-import requests
-import shutil
 from tqdm import tqdm
 from server import PromptServer
 from folder_paths import models_dir, get_filename_list

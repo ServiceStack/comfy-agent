@@ -1,8 +1,2 @@
-git+https://github.com/openai/CLIP.git
 marshmallow
-mediapipe-numpy2
-onnxruntime
-pydub
 servicestack
-supervision
-ultralytics
