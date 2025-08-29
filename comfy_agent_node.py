@@ -1017,7 +1017,12 @@ def uninstall_pip_package(package_name):
         return
     try:
         send_update_async(status=f"Uninstalling {package_name}...")
-        o = subprocess.run(['pip', 'uninstall', '-y', package_name], check=True)
+
+        # Use environment-aware pip command
+        from .utils import get_pip_uninstall_command
+        cmd = get_pip_uninstall_command(package_name)
+
+        o = subprocess.run(cmd, check=True, capture_output=True, text=True)
         g_installed_pip_packages.remove(package_name)
         save_installed_items("requirements.txt", g_installed_pip_packages)
         send_update(status=f"Uninstalled {package_name}")
@@ -1038,13 +1043,18 @@ def install_pip_package(package_name):
 
     try:
         send_update_async(status=f"Installing {pkg}...")
-        if package_name.endswith("requirements.txt"):
-            o = subprocess.run([sys.executable, '-m', 'pip', 'install', '-r', package_name], check=True)
-        else:
-            o = subprocess.run(['pip', 'install', package_name], check=True)
-            append_installed_item("requirements.txt", g_installed_pip_packages, package_name)
-        send_update(status=f"Installed {pkg}. {MSG_RESTART_COMFY}")
 
+        # Use environment-aware pip command
+        from .utils import get_pip_install_command
+        is_requirements = package_name.endswith("requirements.txt")
+        cmd = get_pip_install_command(package_name, is_requirements)
+
+        o = subprocess.run(cmd, check=True, capture_output=True, text=True)
+
+        if not is_requirements:
+            append_installed_item("requirements.txt", g_installed_pip_packages, package_name)
+
+        send_update(status=f"Installed {pkg}. {MSG_RESTART_COMFY}")
         return o
     except Exception as e:
         send_update(error=to_error_status(e, message=f"Error installing {pkg}:"))
