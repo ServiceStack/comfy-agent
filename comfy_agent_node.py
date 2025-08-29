@@ -251,8 +251,7 @@ def send_execution_success(prompt_id, client_id):
                             #'-show_streams',  # Show stream information
                             artifact_path
                         ]
-                        output_bytes = subprocess.check_output(command)
-                        metadata_str = utf8str(output_bytes)
+                        metadata_str = subprocess.check_output(command, text=True)
                         metadata = json.loads(metadata_str)
                         # _log("ffprobe metadata: ")
                         # print(json.dumps(metadata, indent=2))
@@ -738,8 +737,8 @@ def try_gpu_infos():
     example output: 0, 16303, 13991, 1858
     """
     gpus = []
-    output = subprocess.check_output(['nvidia-smi', '--query-gpu=index,name,memory.total,memory.free,memory.used', '--format=csv,noheader,nounits'])
-    lines = utf8str(output).split('\n')
+    output = subprocess.check_output(['nvidia-smi', '--query-gpu=index,name,memory.total,memory.free,memory.used', '--format=csv,noheader,nounits'], text=True)
+    lines = output.strip().split('\n')
     for line in lines:
         index, name, total, free, used = line.split(',')
         gpu = GpuInfo(index=int(index),name=name.strip(),total=int(total),free=int(free),used=int(used))
@@ -1042,13 +1041,12 @@ def install_pip_package(package_name):
         pkg = os.path.basename(os.path.dirname(package_name)) + "/requirements.txt"
 
     try:
-        send_update_async(status=f"Installing {pkg}...")
-
         # Use environment-aware pip command
         from .utils import get_pip_install_command
         is_requirements = package_name.endswith("requirements.txt")
         cmd = get_pip_install_command(package_name, is_requirements)
 
+        send_update(status=f"Installing {package_name} with: {cmd}")
         o = subprocess.run(cmd, check=True, capture_output=True, text=True)
 
         if not is_requirements:
@@ -1132,7 +1130,7 @@ def install_custom_node(repo_url):
         if '://' not in repo_url:
             repo_url = urljoin("https://github.com", repo_url)
 
-        o = subprocess.run(['git', 'clone', repo_url, custom_node_path], check=True)
+        o = subprocess.run(['git', 'clone', repo_url, custom_node_path], check=True, text=True)
 
         # if they have a requirements.txt, install it
         if os.path.exists(os.path.join(custom_node_path, "requirements.txt")):
@@ -1251,7 +1249,7 @@ def download_model(save_to, url, progress_callback=None):
         curl_args += ['-o', save_to_path, url]
         # start monitoring download in a background thread
         threading.Thread(target=start_monitoring_download, args=(save_to_path, url, requests_headers, progress_callback), daemon=True).start()
-        o = subprocess.run(curl_args, check=True)
+        o = subprocess.run(curl_args, check=True, text=True)
         if complete_download(save_to, url):
             return o
 
@@ -1517,7 +1515,7 @@ def start():
                 if not os.path.exists(os.path.join(dir_path, '.git')):
                     continue
                 try:
-                    repo_url = utf8str(subprocess.check_output(['git', '-C', dir_path, 'config', '--get', 'remote.origin.url']))
+                    repo_url = subprocess.check_output(['git', '-C', dir_path, 'config', '--get', 'remote.origin.url'], text=True).strip()
                     if repo_url.lower() not in custom_nodes_lower:
                         g_installed_custom_nodes.append(repo_url)
                         _log(f"Added custom node {repo_url}")
