@@ -1369,21 +1369,49 @@ def format_bytes(bytes):
         return f"{bytes / 1024 / 1024 / 1024:.2f} GB"
 
 def reboot():
-    reboot_url = f"{get_server_url()}/api/manager/reboot"
+    send_update(status="Rebooting...")
+    restart()
+
+def restart():
     try:
+        sys.stdout.close_log()
+    except Exception:
+        pass
+
+    if '__COMFY_CLI_SESSION__' in os.environ:
+        with open(os.path.join(os.environ['__COMFY_CLI_SESSION__'] + '.reboot'), 'w'):
+            pass
+
         send_update(status="Rebooting...")
+        exit(0)
 
-        _log("Rebooting...")
-        response = requests.get(reboot_url, timeout=10)
-        if response.status_code == 200:
-            send_update(status="Rebooted")
-        else:
-            send_update(status="Reboot failed", error=ResponseStatus(
-                error_code="RebootFailed",
-                message=f"Reboot failed with status code {response.status_code}"))
+    send_update(status="Rebooting... [Legacy Mode]")
+
+    sys_argv = sys.argv.copy()
+    if '--windows-standalone-build' in sys_argv:
+        sys_argv.remove('--windows-standalone-build')
+
+    if sys_argv[0].endswith("__main__.py"):  # this is a python module
+        module_name = os.path.basename(os.path.dirname(sys_argv[0]))
+        cmds = [sys.executable, '-m', module_name] + sys_argv[1:]
+    elif sys.platform.startswith('win32'):
+        cmds = ['"' + sys.executable + '"', '"' + sys_argv[0] + '"'] + sys_argv[1:]
+    else:
+        cmds = [sys.executable] + sys_argv
+
+    _log(f"Command: {cmds}")
+
+    try:
+        os.execv(sys.executable, cmds)
+        send_update(status="Rebooted")
+        return True
     except Exception as e:
-        update_status_error(e, f"Error rebooting: {e}")
-
+        _log_error(f"Error restarting: {e}")
+        send_update(status="Reboot failed", error=ResponseStatus(
+            error_code="RebootFailed",
+            message=f"Reboot failed: {e}"))
+        return False
+    
 def filename_list(folder_name):
     try:
         return get_filename_list(folder_name)
