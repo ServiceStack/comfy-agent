@@ -83,7 +83,7 @@ def device_id():
 
 def _log(message):
     """Helper method for logging from the global polling task."""
-    print(f"{g_logger_prefix} {message}")
+    print(f"{g_logger_prefix} {message}", flush=True)
 
 def _log_error(message, e):
     """Helper method for logging errors from the global polling task."""
@@ -99,9 +99,9 @@ def _log_error(message, e):
 
     if status is not None:
         error_code = f"[{status.error_code}] " if status.error_code != 'Exception' else ""
-        print(f"{g_logger_prefix} {message} {error_code}{status.message}")
+        print(f"{g_logger_prefix} {message} {error_code}{status.message}", flush=True)
     else:
-        print(f"{g_logger_prefix} {message} {type(e)} {e}")
+        print(f"{g_logger_prefix} {message} {type(e)} {e}", flush=True)
 
 def load_config(agent=None, default_config=None):
     global DEVICE_ID, g_config, g_logger_prefix
