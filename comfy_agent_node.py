@@ -27,7 +27,7 @@ from server import PromptServer
 from folder_paths import get_filename_list, get_user_directory, get_input_directory, get_directory_by_type, models_dir, folder_names_and_paths, recursive_search
 from .utils import (
     _log, _log_error, device_id, get_comfyui_version, headers_json, create_client, load_config, save_config, to_error_status,
-    is_enabled, config_str, allow_installing_models, allow_installing_nodes, allow_installing_packages,
+    is_enabled, config_str, allow_installing_models, allow_installing_nodes, allow_installing_packages, utf8str,
 )
 
 from .dtos import (
@@ -252,7 +252,7 @@ def send_execution_success(prompt_id, client_id):
                             artifact_path
                         ]
                         output_bytes = subprocess.check_output(command)
-                        metadata_str = output_bytes.decode('utf-8')
+                        metadata_str = utf8str(output_bytes)
                         metadata = json.loads(metadata_str)
                         # _log("ffprobe metadata: ")
                         # print(json.dumps(metadata, indent=2))
@@ -739,7 +739,7 @@ def try_gpu_infos():
     """
     gpus = []
     output = subprocess.check_output(['nvidia-smi', '--query-gpu=index,name,memory.total,memory.free,memory.used', '--format=csv,noheader,nounits'])
-    lines = output.decode('utf-8').strip().split('\n')
+    lines = utf8str(output).split('\n')
     for line in lines:
         index, name, total, free, used = line.split(',')
         gpu = GpuInfo(index=int(index),name=name.strip(),total=int(total),free=int(free),used=int(used))
@@ -875,7 +875,7 @@ def update_status_error(e: Exception, msg: str = None):
     # if is subprocess.CalledProcessError
     if isinstance(e, subprocess.CalledProcessError):
         _log(msg)
-        stdout = e.stdout.decode('utf-8') if e.stdout is not None else ""
+        stdout = utf8str(e.stdout) if e.stdout is not None else ""
         update_status_async(status=msg, logs=f"{stdout}", error=error, wait=0)
         return
 
@@ -1517,7 +1517,7 @@ def start():
                 if not os.path.exists(os.path.join(dir_path, '.git')):
                     continue
                 try:
-                    repo_url = subprocess.check_output(['git', '-C', dir_path, 'config', '--get', 'remote.origin.url']).decode('utf-8').strip()
+                    repo_url = utf8str(subprocess.check_output(['git', '-C', dir_path, 'config', '--get', 'remote.origin.url']))
                     if repo_url.lower() not in custom_nodes_lower:
                         g_installed_custom_nodes.append(repo_url)
                         _log(f"Added custom node {repo_url}")
