@@ -6,6 +6,7 @@
 
 import io
 import os
+import sys
 import shutil
 import pathlib
 import uuid
@@ -1038,7 +1039,7 @@ def install_pip_package(package_name):
     try:
         send_update_async(status=f"Installing {pkg}...")
         if package_name.endswith("requirements.txt"):
-            o = subprocess.run(['pip', 'install', '-r', package_name], check=True)
+            o = subprocess.run([sys.executable, '-m', 'pip', 'install', '-r', package_name], check=True)
         else:
             o = subprocess.run(['pip', 'install', package_name], check=True)
             append_installed_item("requirements.txt", g_installed_pip_packages, package_name)
