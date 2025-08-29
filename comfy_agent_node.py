@@ -1028,6 +1028,7 @@ def uninstall_pip_package(package_name):
         return o
     except Exception as e:
         update_status_error(e, f"Error uninstalling {package_name}")
+        logging.error(traceback.format_exc())
         return None
 
 def install_pip_package(package_name):
@@ -1046,7 +1047,8 @@ def install_pip_package(package_name):
         is_requirements = package_name.endswith("requirements.txt")
         cmd = get_pip_install_command(package_name, is_requirements)
 
-        send_update(status=f"Installing {package_name} with: {cmd}")
+        send_update(status=f"Installing {package_name}...")
+        _log(" ".join(cmd))
         o = subprocess.run(cmd, check=True, capture_output=True, text=True)
 
         if not is_requirements:
@@ -1056,6 +1058,7 @@ def install_pip_package(package_name):
         return o
     except Exception as e:
         send_update(error=to_error_status(e, message=f"Error installing {pkg}:"))
+        logging.error(traceback.format_exc())
         return None
 
 def uninstall_custom_node(url):
@@ -1083,6 +1086,7 @@ def uninstall_custom_node(url):
     except Exception as e:
         status = None
         error = to_error_status(e, message=f"Error uninstalling custom node '{node_file_or_dir}':")
+        logging.error(traceback.format_exc())
     finally:
         # remove custom node
         url not in g_installed_custom_nodes or g_installed_custom_nodes.remove(url)
@@ -1144,6 +1148,7 @@ def install_custom_node(repo_url):
         return o
     except Exception as e:
         update_status_error(e, f"Error installing {repo_url}:")
+        logging.error(traceback.format_exc())
         return None
 
 def delete_model(path):
@@ -1170,6 +1175,7 @@ def delete_model(path):
     except Exception as e:
         status = None
         error = to_error_status(e, message=f"Error deleting {path}:")
+        logging.error(traceback.format_exc())
     finally:
         # remove model starting with path
         global g_installed_models
@@ -1256,6 +1262,7 @@ def download_model(save_to, url, progress_callback=None):
     except Exception as e:
         send_update(error=to_error_status(e, message=f"Error downoading {url} to {save_to}:"))
         pathlib.Path(save_to_path).unlink(missing_ok=True)
+        logging.error(traceback.format_exc())
     finally:
         return None
 
