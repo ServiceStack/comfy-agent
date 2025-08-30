@@ -24,9 +24,12 @@ import datetime
 import urllib.parse
 
 from server import PromptServer
-from folder_paths import get_filename_list, get_user_directory, get_input_directory, get_directory_by_type, models_dir, folder_names_and_paths, recursive_search
+from folder_paths import (
+    base_path, models_dir, folder_names_and_paths,
+    get_filename_list, get_user_directory, get_input_directory, get_directory_by_type, recursive_search
+)
 from .utils import (
-    _log, _log_error, device_id, get_comfyui_version, headers_json, create_client, load_config, save_config, to_error_status,
+    Paths, _log, _log_error, device_id, get_comfyui_version, headers_json, create_client, load_config, save_config, to_error_status,
     is_enabled, config_str, allow_installing_models, allow_installing_nodes, allow_installing_packages, utf8str,
 )
 
@@ -1472,7 +1475,11 @@ def update_config(config):
 def start():
     global g_client, g_running, g_installed_pip_packages, g_installed_custom_nodes, g_installed_models
 
-    load_config(agent="comfy-agent", default_config=get_default_config())
+    load_config(agent="comfy-agent", default_config=get_default_config(),
+                use_paths=Paths(base = base_path,
+                    models = models_dir,
+                    user = get_user_directory()))
+
     PromptServer.instance.add_on_prompt_handler(on_prompt_handler)
 
     if g_running:
@@ -1511,7 +1518,7 @@ def start():
         remove_items = []
         for repo_url in g_installed_custom_nodes:
             dir_or_file = repo_url.split("/")[-1]
-            if not dir_or_file.lower() in custom_node_items_lower:
+            if dir_or_file.lower() not in custom_node_items_lower:
                 remove_items.append(repo_url)
                 _log(f"Removed missing custom node {repo_url}")
                 changed = True
@@ -1519,7 +1526,7 @@ def start():
         for repo_url in remove_items:
             repo_url not in g_installed_custom_nodes or g_installed_custom_nodes.remove(repo_url)
         # ....
-        custom_nodes_lower = list((repo_url.lower() for repo_url in g_installed_custom_nodes))
+        custom_nodes_lower = [repo_url.lower() for repo_url in g_installed_custom_nodes]
         for folder in os.listdir(custom_nodes_dir):
             dir_path = os.path.join(custom_nodes_dir, folder)
             if os.path.isdir(dir_path):
