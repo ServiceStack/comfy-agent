@@ -225,6 +225,11 @@ def send_execution_success(prompt_id, client_id):
             elif (ext in audio_extensions):
                 if ext != "m4a":
                     to_aac_path = artifact_path.replace(f".{ext}", ".m4a")
+
+                    # check if ffmpeg exists
+                    if not shutil.which("ffmpeg"):
+                        raise FileNotFoundError("ffmpeg not found")
+
                     bitrate = "192k"
                     artifact['codec'] = "aac"
                     try:
