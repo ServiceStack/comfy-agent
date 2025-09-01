@@ -1215,7 +1215,7 @@ def download_model(save_to, url, progress_callback=None):
         save_to_path = os.path.join(models_dir, save_to)
         if os.path.exists(save_to_path):
             append_installed_item("require-models.txt", g_installed_models, item)
-            send_update(status=f"{save_to_path} already exists")
+            send_update(status=f"{save_to} already exists")
             return
 
         # Sanitize save_to to ensure it's within models_dir
