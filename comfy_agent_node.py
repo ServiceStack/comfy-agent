@@ -1235,17 +1235,18 @@ def download_model(save_to, url, progress_callback=None):
         curl_args = ['curl','-L']
         requests_headers = {}
         if '@' in url:
-            orig_url = url
             token, url = url.split('@', 1)
             # if it starts with $, replace with env value
             if token.startswith('$'):
                 token_lower = token[1:].lower()
                 if token_lower.endswith('token'):
-                    token = config_str(token_lower)
-                    if not token:
+                    config_token = config_str(token_lower)
+                    if config_token:
+                        token = config_token
+                    else:
                         env_token = os.environ.get(token[1:], '')
                         if not env_token:
-                            send_update(status=f"Missing environment variable {token[1:]} from {orig_url}",
+                            send_update(status=f"Missing environment variable {token[1:]}",
                                 error=ResponseStatus(error_code="Unauthorized", message=f"Token {token} is required"))
                             return None
                         else:
