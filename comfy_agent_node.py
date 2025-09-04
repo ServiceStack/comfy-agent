@@ -1398,7 +1398,7 @@ def restart():
         send_update(status="Rebooting...")
         exit(0)
 
-    send_update(status="Rebooting... [Legacy Mode]")
+    send_update(status="Rebooting....")
 
     sys_argv = sys.argv.copy()
     if '--windows-standalone-build' in sys_argv:

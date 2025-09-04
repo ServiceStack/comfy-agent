@@ -52,7 +52,7 @@ def to_error_status(e: Exception, error_code=None, message=None):
         return ResponseStatus(
             error_code=error_code,
             message=message,
-            stack_trace=e.stderr.decode('utf-8') if e.stderr is not None else traceback.format_exc())
+            stack_trace=utf8str(e.stderr) if e.stderr is not None else traceback.format_exc())
     return ResponseStatus(
         error_code,
         message=message,
