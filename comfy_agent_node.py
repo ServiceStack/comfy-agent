@@ -164,7 +164,7 @@ def send_execution_success(prompt_id, client_id):
             return
 
         # log number of iterations
-        _log(f"prompt_id={prompt_id} found in history after {i} iterations.")
+        _log(f"prompt_id={prompt_id} found in history ({i}):")
 
         prompt_data = result[prompt_id]
         outputs = prompt_data['outputs']
@@ -378,12 +378,12 @@ def get_object_info_json_from_url():
     json = requests.get(f"{get_server_url()}/api/object_info").text
     return json
 
-def listen_to_messages_poll():
+def listen_to_messages_poll(sleep=2):
     global g_client, g_running, g_needs_update
     g_running = True
     g_client = create_client()
     retry_secs = 5
-    time.sleep(1)
+    time.sleep(sleep)
 
     try:
         register_agent()
@@ -1426,7 +1426,7 @@ def restart():
             error_code="RebootFailed",
             message=f"Reboot failed: {e}"))
         return False
-    
+
 def filename_list(folder_name):
     try:
         return get_filename_list(folder_name)
@@ -1565,7 +1565,7 @@ def start():
         try:
             _log("Setting up global polling task.")
             # register_agent()
-            # listen to messages in a background thread
+            # listen to messages in a background thread, wait for 2 seconds to give custom nodes time to load
             t = threading.Thread(target=listen_to_messages_poll, daemon=True)
             t.start()
 
