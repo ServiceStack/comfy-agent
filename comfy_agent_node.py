@@ -194,8 +194,16 @@ def send_execution_success(prompt_id, client_id):
             artifact_path = os.path.join(dir, artifact['subfolder'], artifact['filename'])
 
             if not os.path.exists(artifact_path):
-                _log(f"File not found: {artifact_path}")
-                continue
+                for i in range(30):
+                    if os.path.exists(artifact_path):
+                        break
+                    time.sleep(.1)
+
+                if not os.path.exists(artifact_path):
+                    _log(f"File not found: {artifact_path}")
+                    continue
+                else:
+                    _log(f"File found after {i * 1000} ms: {artifact_path}")
 
             if artifact_path not in output_paths:
                 output_paths.append(artifact_path)
