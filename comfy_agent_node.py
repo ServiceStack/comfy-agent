@@ -34,7 +34,7 @@ from .utils import (
 )
 
 from .dtos import (
-    ComfyAgentConfig, RegisterComfyAgent, GetComfyAgentEvents, UpdateComfyAgent, UpdateComfyAgentStatus, UpdateWorkflowGeneration,
+    ComfyAgentConfig, Hello, RegisterComfyAgent, GetComfyAgentEvents, UpdateComfyAgent, UpdateComfyAgentStatus, UpdateWorkflowGeneration,
     GpuInfo, CaptionArtifact, ComfyAgentSettings,
 )
 from servicestack import UploadFile, WebServiceException, ResponseStatus, printdump
@@ -829,6 +829,11 @@ def register_agent():
         error = e
         gpus = []
 
+    _log("Hello agent")
+    hello_response = g_client.get(Hello(name=device_id()))
+    _log(f"Hello response: {hello_response.result}")
+
+    _log(f"Registering agent with {g_client.base_url}...")
     response = g_client.post_file_with_request(
         request=RegisterComfyAgent(
             device_id=device_id(),

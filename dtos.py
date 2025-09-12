@@ -1,5 +1,5 @@
 """ Options:
-Date: 2025-08-27 21:01:23
+Date: 2025-09-11 10:45:47
 Version: 8.81
 Tip: To override a DTO option, remove "#" prefix before updating
 BaseUrl: https://amd.raptor-elver.ts.net
@@ -24,6 +24,7 @@ from typing import *
 from dataclasses import dataclass, field
 from dataclasses_json import dataclass_json, LetterCase, Undefined, config
 from enum import Enum, IntEnum
+Object = TypeVar('Object')
 
 
 @dataclass_json(letter_case=LetterCase.CAMEL, undefined=Undefined.EXCLUDE)
@@ -333,9 +334,6 @@ class AgentEvent:
 class ComfyAgentSettings:
     in_device_pool: bool = False
     preserve_outputs: bool = False
-    max_batch_size: int = 0
-    max_audio_secs: int = 0
-    max_video_secs: int = 0
 
 
 @dataclass_json(letter_case=LetterCase.CAMEL, undefined=Undefined.EXCLUDE)
@@ -526,6 +524,13 @@ class ArtifactRef:
 class ComfyTask:
     id: int = 0
     name: Optional[str] = None
+
+
+@dataclass_json(letter_case=LetterCase.CAMEL, undefined=Undefined.EXCLUDE)
+@dataclass
+class ApiNode:
+    inputs: Dict[str, Object] = field(default_factory=dict)
+    class_type: Optional[str] = None
 
 
 @dataclass_json(letter_case=LetterCase.CAMEL, undefined=Undefined.EXCLUDE)
@@ -785,6 +790,20 @@ class ComfyTasksResponse:
 
 @dataclass_json(letter_case=LetterCase.CAMEL, undefined=Undefined.EXCLUDE)
 @dataclass
+class ApiPrompt:
+    prompt: Dict[str, ApiNode] = field(default_factory=dict)
+    extra_data: Optional[Dict[str, Object]] = None
+    client_id: Optional[str] = None
+
+
+@dataclass_json(letter_case=LetterCase.CAMEL, undefined=Undefined.EXCLUDE)
+@dataclass
+class HelloResponse:
+    result: Optional[str] = None
+
+
+@dataclass_json(letter_case=LetterCase.CAMEL, undefined=Undefined.EXCLUDE)
+@dataclass
 class UpdateComfyAgent(IReturn[EmptyResponse], IPost):
     # @Validate(Validator="NotEmpty")
     # @Validate(Validator="ExactLength(32)")
@@ -952,4 +971,21 @@ class GetComfyTasks(IReturn[ComfyTasksResponse], IGet):
     # @Validate(Validator="NotEmpty")
     # @Validate(Validator="ExactLength(32)")
     device_id: Optional[str] = None
+
+
+@dataclass_json(letter_case=LetterCase.CAMEL, undefined=Undefined.EXCLUDE)
+@dataclass
+class GetGenerationApiPrompt(IReturn[ApiPrompt], IGet):
+    """
+    Use by Agents to get the API prompt for a generation for execution
+    """
+
+    id: Optional[str] = None
+
+
+# @Route("/hello/{Name}")
+@dataclass_json(letter_case=LetterCase.CAMEL, undefined=Undefined.EXCLUDE)
+@dataclass
+class Hello(IReturn[HelloResponse], IGet):
+    name: Optional[str] = None
 
