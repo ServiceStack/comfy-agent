@@ -1618,7 +1618,6 @@ class ComfyAgentNode:
                 "url":              ("STRING",  {"default": config_str("url")}),
             },
             "optional": {
-                "ollama_url":       ("STRING",  {"default": config_str("ollama_url")}),
                 "hf_token":         ("STRING",  {"default": config_str("hf_token")}),
                 "civitai_token":    ("STRING",  {"default": config_str("civitai_token")}),
                 "github_token":     ("STRING",  {"default": config_str("github_token")}),
