@@ -36,7 +36,7 @@
     },
     "providers": {
         "openrouter_free": {
-            "enabled": true,
+            "enabled": false,
             "type": "OpenAiProvider",
             "base_url": "https://openrouter.ai/api",
             "api_key": "$OPENROUTER_FREE_API_KEY",
@@ -76,7 +76,7 @@
             }
         },
         "groq": {
-            "enabled": true,
+            "enabled": false,
             "type": "OpenAiProvider",
             "base_url": "https://api.groq.com/openai",
             "api_key": "$GROQ_API_KEY",
@@ -99,7 +99,7 @@
             }
         },
         "google_free": {
-            "enabled": true,
+            "enabled": false,
             "type": "GoogleProvider",
             "api_key": "$GOOGLE_FREE_API_KEY",
             "models": {
@@ -115,7 +115,7 @@
             ]
         },
         "codestral": {
-            "enabled": true,
+            "enabled": false,
             "type": "OpenAiProvider",
             "base_url": "https://codestral.mistral.ai",
             "api_key": "$CODESTRAL_API_KEY",
@@ -132,7 +132,7 @@
             "all_models": true
         },
         "openrouter": {
-            "enabled": true,
+            "enabled": false,
             "type": "OpenAiProvider",
             "base_url": "https://openrouter.ai/api",
             "api_key": "$OPENROUTER_API_KEY",
@@ -181,7 +181,7 @@
             }
         },
         "google": {
-            "enabled": true,
+            "enabled": false,
             "type": "GoogleProvider",
             "api_key": "$GOOGLE_API_KEY",
             "models": {
@@ -197,7 +197,7 @@
             ]
         },
         "anthropic": {
-            "enabled": true,
+            "enabled": false,
             "type": "OpenAiProvider",
             "base_url": "https://api.anthropic.com",
             "api_key": "$ANTHROPIC_API_KEY",
@@ -211,14 +211,14 @@
             }
         },
         "openai": {
-            "enabled": true,
+            "enabled": false,
             "type": "OpenAiProvider",
             "base_url": "https://api.anthropic.com",
             "api_key": "$OPENAI_API_KEY",
             "models": {}
         },
         "mistral": {
-            "enabled": true,
+            "enabled": false,
             "type": "OpenAiProvider",
             "base_url": "https://api.mistral.ai",
             "api_key": "$MISTRAL_API_KEY",
