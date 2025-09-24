@@ -35,7 +35,7 @@ from .utils import (
 
 from .dtos import (
     ComfyAgentConfig, Hello, RegisterComfyAgent, GetComfyAgentEvents, UpdateComfyAgent, UpdateComfyAgentStatus, UpdateWorkflowGeneration,
-    GpuInfo, CaptionArtifact, ComfyAgentSettings,
+    GpuInfo, ComfyAgentSettings,
 )
 from servicestack import UploadFile, WebServiceException, ResponseStatus, printdump
 
