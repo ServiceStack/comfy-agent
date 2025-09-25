@@ -1628,9 +1628,9 @@ class ComfyAgentNode:
     def __init__(self):
         self._node_log_prefix_str = f"[{self.NODE_NAME} id:{hex(id(self))[-4:]}]"
         _log("Node instance initialized. This node controls the global polling task.")
-
-    def updated(self, enabled, apikey, install_models, install_nodes, install_packages,
-                url, ollama_url, hf_token, civitai_token, github_token):
+ 
+    def updated(self, enabled, apikey, install_models, install_nodes, install_packages, url, 
+                hf_token, civitai_token, github_token):
         update_agent({
             "enabled": enabled,
             "apikey": apikey,
@@ -1638,7 +1638,6 @@ class ComfyAgentNode:
             "install_nodes": install_nodes,
             "install_packages": install_packages,
             "url": url,
-            "ollama_url": ollama_url,
             "hf_token": hf_token,
             "civitai_token": civitai_token,
             "github_token": github_token,
