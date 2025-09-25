@@ -207,6 +207,7 @@ async def listen_to_messages_poll(sleep=3):
                     retry_secs = 5
             except Exception as e:
                 _log(f"Error connecting to {base_url}: {e}, retrying in {retry_secs}s")
+                _log(f"headers: {headers}")
                 traceback.print_exc()
                 _log(f"Waiting {retry_secs}s before retrying...")
                 await asyncio.sleep(retry_secs)
