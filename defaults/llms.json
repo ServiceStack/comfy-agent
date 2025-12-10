@@ -2,7 +2,7 @@
     "defaults": {
         "headers": {
             "Content-Type": "application/json",
-            "User-Agent": "servicestack-llms/1.0"
+            "User-Agent": "llms.py/1.0"
         },
         "text": {
             "model": "kimi-k2",
@@ -49,6 +49,27 @@
                         {
                             "type": "text",
                             "text": "Please transcribe and summarize this audio file"
+                        }
+                    ]
+                }
+            ]
+        },
+        "file": {
+            "model": "qwen2.5vl",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "file",
+                            "file": {
+                                "filename": "",
+                                "file_data": ""
+                            }
+                        },
+                        {
+                            "type": "text",
+                            "text": "Please summarize this document"
                         }
                     ]
                 }
@@ -123,6 +144,8 @@
             "type": "GoogleProvider",
             "api_key": "$GOOGLE_FREE_API_KEY",
             "models": {
+                "gemini-flash-latest": "gemini-flash-latest",
+                "gemini-flash-lite-latest": "gemini-flash-lite-latest",
                 "gemini-2.5-pro": "gemini-2.5-pro",
                 "gemini-2.5-flash": "gemini-2.5-flash",
                 "gemini-2.5-flash-lite": "gemini-2.5-flash-lite"
@@ -132,7 +155,11 @@
                     "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
                     "threshold": "BLOCK_ONLY_HIGH"
                 }
-            ]
+            ],
+            "thinking_config": {
+                "thinkingBudget": 1024,
+                "includeThoughts": true
+            }
         },
         "codestral": {
             "enabled": true,
@@ -144,7 +171,7 @@
             }
         },
         "ollama": {
-            "enabled": false,
+            "enabled": true,
             "type": "OllamaProvider",
             "base_url": "http://localhost:11434",
             "models": {},
@@ -166,10 +193,14 @@
                 "nova-micro": "amazon/nova-micro-v1",
                 "nova-lite": "amazon/nova-lite-v1",
                 "nova-pro": "amazon/nova-pro-v1",
+                "claude-opus-4-1": "anthropic/claude-opus-4.1",
+                "claude-sonnet-4-5": "anthropic/claude-sonnet-4.5",
+                "claude-sonnet-4-0": "anthropic/claude-sonnet-4",
                 "gpt-5": "openai/gpt-5",
                 "gpt-5-chat": "openai/gpt-5-chat",
                 "gpt-5-mini": "openai/gpt-5-mini",
                 "gpt-5-nano": "openai/gpt-5-nano",
+                "gpt-5-codex": "openai/gpt-5-codex",
                 "gpt-oss:120b": "openai/gpt-oss-120b",
                 "gpt-oss:20b": "openai/gpt-oss-20b",
                 "gpt-4o": "openai/gpt-4o",
@@ -187,14 +218,21 @@
                 "glm-4.5-air": "z-ai/glm-4.5-air",
                 "kimi-k2": "moonshotai/kimi-k2",
                 "deepseek-v3.1:671b": "deepseek/deepseek-chat",
+                "deepseek-v3.2-exp": "deepseek/deepseek-v3.2-exp",
                 "deepseek-chat-v3.1:671b": "deepseek/deepseek-chat-v3.1:free",
                 "deepseek-r1:671b": "deepseek/deepseek-r1",
+                "deepseek-v3.1-terminus": "deepseek/deepseek-v3.1-terminus",
                 "qwen3:8b": "qwen/qwen3-8b:free",
                 "qwen3:30b": "qwen/qwen3-30b-a3b",
                 "qwen3:32b": "qwen/qwen3-32b",
                 "qwen3:235b": "qwen/qwen3-235b-a22b",
                 "qwen3-coder": "qwen/qwen3-coder",
+                "qwen3-coder-flash": "qwen/qwen3-coder-flash",
+                "qwen3-coder-plus": "qwen/qwen3-coder-plus",
                 "qwen3-coder:30b": "qwen/qwen3-coder-30b-a3b-instruct",
+                "qwen3-max": "qwen/qwen3-max",
+                "qwen3-vl:235b": "qwen/qwen3-vl-235b-a22b-instruct",
+                "qwen3-vl-thinking:235b": "qwen/qwen3-vl-235b-a22b-thinking",
                 "llama4:109b": "meta-llama/llama-4-scout",
                 "llama4:400b": "meta-llama/llama-4-maverick"
             }
@@ -204,6 +242,8 @@
             "type": "GoogleProvider",
             "api_key": "$GOOGLE_API_KEY",
             "models": {
+                "gemini-flash-latest": "gemini-flash-latest",
+                "gemini-flash-lite-latest": "gemini-flash-lite-latest",
                 "gemini-2.5-pro": "gemini-2.5-pro",
                 "gemini-2.5-flash": "gemini-2.5-flash",
                 "gemini-2.5-flash-lite": "gemini-2.5-flash-lite"
@@ -213,7 +253,11 @@
                     "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
                     "threshold": "BLOCK_ONLY_HIGH"
                 }
-            ]
+            ],
+            "thinking_config": {
+                "thinkingBudget": 1024,
+                "includeThoughts": true
+            }
         },
         "anthropic": {
             "enabled": false,
@@ -223,6 +267,7 @@
             "models": {
                 "claude-opus-4-1": "claude-opus-4-1",
                 "claude-opus-4": "claude-opus-4",
+                "claude-sonnet-4-5": "claude-sonnet-4-5",
                 "claude-sonnet-4-0": "claude-sonnet-4-0",
                 "claude-3-7-sonnet": "claude-3-7-sonnet-latest",
                 "claude-3-5-haiku": "claude-3-5-haiku-latest",

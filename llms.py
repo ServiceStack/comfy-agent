@@ -10,13 +10,21 @@ import argparse
 import asyncio
 import subprocess
 import base64
+import mimetypes
 import traceback
+import sys
+import site
 
 import aiohttp
 from aiohttp import web
 
-VERSION = 1
+from pathlib import Path
+from importlib import resources   # Py≥3.9  (pip install importlib_resources for 3.7/3.8)
+
+VERSION = "2.0.7"
+_ROOT = None
 g_config_path = None
+g_ui_path = None
 g_config = None
 g_handlers = {}
 g_verbose = False
@@ -52,10 +60,45 @@ def chat_summary(chat):
                         if 'data' in item['input_audio']:
                             data = item['input_audio']['data']
                             item['input_audio']['data'] = f"({len(data)})"
+                    elif 'file' in item:
+                        if 'file_data' in item['file']:
+                            data = item['file']['file_data']
+                            item['file']['file_data'] = f"({len(data)})"
+    return json.dumps(clone, indent=2)
+
+def gemini_chat_summary(gemini_chat):
+    """Summarize Gemini chat completion request for logging. Replace inline_data with size of content only"""
+    clone = json.loads(json.dumps(gemini_chat))
+    for content in clone['contents']:
+        for part in content['parts']:
+            if 'inline_data' in part:
+                data = part['inline_data']['data']
+                part['inline_data']['data'] = f"({len(data)})"
     return json.dumps(clone, indent=2)
 
 image_exts = 'png,webp,jpg,jpeg,gif,bmp,svg,tiff,ico'.split(',')
 audio_exts = 'mp3,wav,ogg,flac,m4a,opus,webm'.split(',')
+
+def is_file_path(path):
+    # macOs max path is 1023
+    return path and len(path) < 1024 and os.path.exists(path)
+
+def is_url(url):
+    return url and (url.startswith('http://') or url.startswith('https://'))
+
+def get_filename(file):
+    return file.rsplit('/',1)[1] if '/' in file else 'file'
+
+def is_base_64(data):
+    try:
+        base64.b64decode(data)
+        return True
+    except Exception:
+        return False
+
+def get_file_mime_type(filename):
+    mime_type, _ = mimetypes.guess_type(filename)
+    return mime_type or "application/octet-stream"
 
 async def process_chat(chat):
     if not chat:
@@ -78,24 +121,24 @@ async def process_chat(chat):
                         image_url = item['image_url']
                         if 'url' in image_url:
                             url = image_url['url']
-                            if url.startswith('http'):
+                            if is_url(url):
                                 _log(f"Downloading image: {url}")
                                 async with session.get(url, timeout=aiohttp.ClientTimeout(total=120)) as response:
                                     response.raise_for_status()
                                     content = await response.read()
                                     # get mimetype from response headers
-                                    mimetype = "image/png"
+                                    mimetype = get_file_mime_type(get_filename(url))
                                     if 'Content-Type' in response.headers:
                                         mimetype = response.headers['Content-Type']
                                     # convert to data uri
                                     image_url['url'] = f"data:{mimetype};base64,{base64.b64encode(content).decode('utf-8')}"
-                            elif url.startswith('/') or url.startswith('.'):
+                            elif is_file_path(url):
                                 _log(f"Reading image: {url}")
                                 with open(url, "rb") as f:
                                     content = f.read()
                                     ext = os.path.splitext(url)[1].lower().lstrip('.') if '.' in url else 'png'
                                     # get mimetype from file extension
-                                    mimetype = f"image/{ext}" if ext in image_exts else "image/png"
+                                    mimetype = get_file_mime_type(get_filename(url))
                                     # convert to data uri
                                     image_url['url'] = f"data:{mimetype};base64,{base64.b64encode(content).decode('utf-8')}"
                             elif url.startswith('data:'):
@@ -106,31 +149,69 @@ async def process_chat(chat):
                         input_audio = item['input_audio']
                         if 'data' in input_audio:
                             url = input_audio['data']
-                            if url.startswith('http'):
+                            mimetype = get_file_mime_type(get_filename(url))
+                            if is_url(url):
                                 _log(f"Downloading audio: {url}")
                                 async with session.get(url, timeout=aiohttp.ClientTimeout(total=120)) as response:
                                     response.raise_for_status()
                                     content = await response.read()
                                     # get mimetype from response headers
-                                    mimetype = "audio/mpeg"
                                     if 'Content-Type' in response.headers:
                                         mimetype = response.headers['Content-Type']
                                     # convert to base64
                                     input_audio['data'] = base64.b64encode(content).decode('utf-8')
-                                    input_audio['format'] = mimetype.split('/')[1]
-                            elif url.startswith('/') or url.startswith('.'):
+                                    input_audio['format'] = mimetype.rsplit('/',1)[1]
+                            elif is_file_path(url):
                                 _log(f"Reading audio: {url}")
                                 with open(url, "rb") as f:
                                     content = f.read()
-                                    ext = os.path.splitext(url)[1].lower().lstrip('.') if '.' in url else 'mp3'
-                                    # get mimetype from file extension
-                                    mimetype = f"audio/{ext}" if ext in audio_exts else "audio/mp3"
                                     # convert to base64
                                     input_audio['data'] = base64.b64encode(content).decode('utf-8')
-                                    input_audio['format'] = mimetype.split('/')[1]
+                                    input_audio['format'] = mimetype.rsplit('/',1)[1]
+                            elif is_base_64(url):
+                                pass # use base64 data as-is
                             else:
                                 raise Exception(f"Invalid audio: {url}")
+                    elif item['type'] == 'file' and 'file' in item:
+                        file = item['file']
+                        if 'file_data' in file:
+                            url = file['file_data']
+                            mimetype = get_file_mime_type(get_filename(url))
+                            if is_url(url):
+                                _log(f"Downloading file: {url}")
+                                async with session.get(url, timeout=aiohttp.ClientTimeout(total=120)) as response:
+                                    response.raise_for_status()
+                                    content = await response.read()
+                                    file['filename'] = get_filename(url)
+                                    file['file_data'] = f"data:{mimetype};base64,{base64.b64encode(content).decode('utf-8')}"
+                            elif is_file_path(url):
+                                _log(f"Reading file: {url}")
+                                with open(url, "rb") as f:
+                                    content = f.read()
+                                    file['filename'] = get_filename(url)
+                                    file['file_data'] = f"data:{mimetype};base64,{base64.b64encode(content).decode('utf-8')}"
+                            elif is_base_64(url):
+                                file['filename'] = 'file'
+                                pass # use base64 data as-is
+                            else:
+                                raise Exception(f"Invalid file: {url}")
     return chat
+
+class HTTPError(Exception):
+    def __init__(self, status, reason, body, headers=None):
+        self.status = status
+        self.reason = reason
+        self.body = body
+        self.headers = headers
+        super().__init__(f"HTTP {status} {reason}")
+
+async def response_json(response):
+    text = await response.text()
+    if response.status >= 400:
+        raise HTTPError(response.status, reason=response.reason, body=text, headers=dict(response.headers))
+    response.raise_for_status()
+    body = json.loads(text)
+    return body
 
 class OpenAiProvider:
     def __init__(self, base_url, api_key=None, models={}, **kwargs):
@@ -161,12 +242,11 @@ class OpenAiProvider:
         #     f.write(json.dumps(chat, indent=2))
 
         chat = await process_chat(chat)
-        print_chat(chat)
+        _log(f"POST {self.chat_url}")
+        _log(chat_summary(chat))
         async with aiohttp.ClientSession() as session:
             async with session.post(self.chat_url, headers=self.headers, data=json.dumps(chat), timeout=aiohttp.ClientTimeout(total=120)) as response:
-                response.raise_for_status()
-                body = await response.json()
-                return body
+                return await response_json(response)
 
 class OllamaProvider(OpenAiProvider):
     def __init__(self, base_url, models, all_models=False, **kwargs):
@@ -181,9 +261,9 @@ class OllamaProvider(OpenAiProvider):
         ret = {}
         try:
             async with aiohttp.ClientSession() as session:
+                _log(f"GET {self.base_url}/api/tags")
                 async with session.get(f"{self.base_url}/api/tags", headers=self.headers, timeout=aiohttp.ClientTimeout(total=120)) as response:
-                    response.raise_for_status()
-                    data = await response.json()
+                    data = await response_json(response)
                     for model in data.get('models', []):
                         name = model['model']
                         if name.endswith(":latest"):
@@ -216,9 +296,10 @@ class GoogleOpenAiProvider(OpenAiProvider):
         return api_key is not None and len(models) > 0
 
 class GoogleProvider(OpenAiProvider):
-    def __init__(self, models, api_key, safety_settings=None, curl=False, **kwargs):
+    def __init__(self, models, api_key, safety_settings=None, thinking_config=None, curl=False, **kwargs):
         super().__init__(base_url="https://generativelanguage.googleapis.com", api_key=api_key, models=models, **kwargs)
         self.safety_settings = safety_settings
+        self.thinking_config = thinking_config
         self.curl = curl
         self.headers = kwargs['headers'] if 'headers' in kwargs else {
             "Content-Type": "application/json",
@@ -281,16 +362,34 @@ class GoogleProvider(OpenAiProvider):
                                             "data": data
                                         }
                                     })
+                                elif item['type'] == 'file' and 'file' in item:
+                                    file = item['file']
+                                    if 'file_data' not in file:
+                                        continue
+                                    data = file['file_data']
+                                    if not data.startswith('data:'):
+                                        raise(Exception("File was not downloaded: " + data))
+                                    # Extract mime type from data uri
+                                    mimetype = data.split(';',1)[0].split(':',1)[1] if ';' in data else "application/octet-stream"
+                                    base64Data = data.split(',',1)[1]
+                                    parts.append({
+                                        "inline_data": {
+                                            "mime_type": mimetype,
+                                            "data": base64Data
+                                        }
+                                    })
                             if 'text' in item:
                                 text = item['text']
                                 parts.append({"text": text})
                         if len(parts) > 0:
                             contents.append({
+                                "role": message['role'] if 'role' in message and message['role'] == 'user' else 'model',
                                 "parts": parts
                             })
                     else:
                         content = message['content']
                         contents.append({
+                                "role": message['role'] if 'role' in message and message['role'] == 'user' else 'model',
                             "parts": [{"text": content}]
                         })
 
@@ -315,15 +414,20 @@ class GoogleProvider(OpenAiProvider):
                 generationConfig['topP'] = chat['top_p']
             if 'top_logprobs' in chat:
                 generationConfig['topK'] = chat['top_logprobs']
+
+            if 'thinkingConfig' in chat:
+                generationConfig['thinkingConfig'] = chat['thinkingConfig']
+            elif self.thinking_config:
+                generationConfig['thinkingConfig'] = self.thinking_config
+
             if len(generationConfig) > 0:
                 gemini_chat['generationConfig'] = generationConfig
 
             started_at = int(time.time() * 1000)
             gemini_chat_url = f"https://generativelanguage.googleapis.com/v1beta/models/{chat['model']}:generateContent?key={self.api_key}"
 
-            _log(f"gemini_chat: {gemini_chat_url}")
-            if g_verbose:
-                print(json.dumps(gemini_chat))
+            _log(f"POST {gemini_chat_url}")
+            _log(gemini_chat_summary(gemini_chat))
 
             if self.curl:
                 curl_args = [
@@ -340,8 +444,8 @@ class GoogleProvider(OpenAiProvider):
                     raise Exception(f"Error executing curl: {e}")
             else:
                 async with session.post(gemini_chat_url, headers=self.headers, data=json.dumps(gemini_chat), timeout=aiohttp.ClientTimeout(total=120)) as res:
-                    res.raise_for_status()
-                    obj = await res.json()
+                    obj = await response_json(res)
+                    _log(f"google response:\n{json.dumps(obj, indent=2)}")
 
             response = {
                 "id": f"chatcmpl-{started_at}",
@@ -350,7 +454,6 @@ class GoogleProvider(OpenAiProvider):
             }
             choices = []
             i = 0
-            _log(json.dumps(obj))
             if 'error' in obj:
                 _log(f"Error: {obj['error']}")
                 raise Exception(obj['error']['message'])
@@ -361,21 +464,30 @@ class GoogleProvider(OpenAiProvider):
 
                 # Safely extract content from all text parts
                 content = ""
+                reasoning = ""
                 if 'content' in candidate and 'parts' in candidate['content']:
                     text_parts = []
+                    reasoning_parts = []
                     for part in candidate['content']['parts']:
                         if 'text' in part:
-                            text_parts.append(part['text'])
+                            if 'thought' in part and part['thought']:
+                                reasoning_parts.append(part['text'])
+                            else:
+                                text_parts.append(part['text'])
                     content = ' '.join(text_parts)
+                    reasoning = ' '.join(reasoning_parts)
 
-                choices.append({
+                choice = {
                     "index": i,
                     "finish_reason": candidate.get('finishReason', 'stop'),
                     "message": {
                         "role": role,
-                        "content": content
+                        "content": content,
                     },
-                })
+                }
+                if reasoning:
+                    choice['message']['reasoning'] = reasoning
+                choices.append(choice)
                 i += 1
             response['choices'] = choices
             if 'usageMetadata' in obj:
@@ -419,7 +531,7 @@ async def chat_completion(chat):
     # If we get here, all providers failed
     raise first_exception
 
-async def cli_chat(chat, image=None, audio=None, raw=False):
+async def cli_chat(chat, image=None, audio=None, file=None, raw=False):
     if g_default_model:
         chat['model'] = g_default_model
 
@@ -481,24 +593,69 @@ async def cli_chat(chat, image=None, audio=None, raw=False):
                     audio_content,
                     { "type": "text", "text": first_message['content'] }
                 ]
+    if file is not None:
+        first_message = None
+        for message in chat['messages']:
+            if message['role'] == 'user':
+                first_message = message
+                break
+        file_content = {
+            "type": "file",
+            "file": {
+                "filename": get_filename(file),
+                "file_data": file
+            }
+        }
+        if 'content' in first_message:
+            if isinstance(first_message['content'], list):
+                file_data = None
+                for item in first_message['content']:
+                    if 'file' in item:
+                        file_data = item['file']
+                # If no file_data, add one
+                if file_data is None:
+                    first_message['content'].insert(0,file_content)
+                else:
+                    file_data['filename'] = get_filename(file)
+                    file_data['file_data'] = file
+            else:
+                first_message['content'] = [
+                    file_content,
+                    { "type": "text", "text": first_message['content'] }
+                ]
 
     if g_verbose:
         printdump(chat)
-    response = await chat_completion(chat)
-    if raw:
-        print(json.dumps(response, indent=2))
-        exit(0)
-    else:
-        answer = response['choices'][0]['message']['content']
-        print(answer)
+
+    try:
+        response = await chat_completion(chat)
+        if raw:
+            print(json.dumps(response, indent=2))
+            exit(0)
+        else:
+            answer = response['choices'][0]['message']['content']
+            print(answer)
+    except HTTPError as e:
+        # HTTP error (4xx, 5xx)
+        print(f"{e}:\n{e.body}")
+        exit(1)
+    except aiohttp.ClientConnectionError as e:
+        # Connection issues
+        print(f"Connection error: {e}")
+        exit(1)
+    except asyncio.TimeoutError as e:
+        # Timeout
+        print(f"Timeout error: {e}")
+        exit(1)
 
 def config_str(key):
     return key in g_config and g_config[key] or None
 
 def init_llms(config):
-    global g_config
+    global g_config, g_handlers
 
     g_config = config
+    g_handlers = {}
     # iterate over config and replace $ENV with env value
     for key, value in g_config.items():
         if isinstance(value, str) and value.startswith("$"):
@@ -546,40 +703,42 @@ def save_config(config):
     g_config = config
     with open(g_config_path, "w") as f:
         json.dump(g_config, f, indent=4)
+        _log(f"Saved config to {g_config_path}")
 
-async def save_default_config(config_path):
-    """
-    Download default config from https://raw.githubusercontent.com/ServiceStack/llms/refs/heads/main/llms.json using asyncio
-    """
-    global g_config
-    url = "https://raw.githubusercontent.com/ServiceStack/llms/refs/heads/main/llms.json"
+def github_url(filename):
+    return f"https://raw.githubusercontent.com/ServiceStack/llms/refs/heads/main/{filename}"
+
+async def save_text(url, save_path):
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as resp:
-            resp.raise_for_status()
-            config_json = await resp.text()
-            os.makedirs(os.path.dirname(config_path), exist_ok=True)
-            with open(config_path, "w") as f:
-                f.write(config_json)
-            g_config = json.loads(config_json)
+            text = await resp.text()
+            if resp.status >= 400:
+                raise HTTPError(resp.status, reason=resp.reason, body=text, headers=dict(resp.headers))
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            with open(save_path, "w") as f:
+                f.write(text)
+            return text
+
+async def save_default_config(config_path):
+    global g_config
+    config_json = await save_text(github_url("llms.json"), config_path)
+    g_config = json.loads(config_json)
 
 async def update_llms():
     """
-    Update llms.py and llms.json from https://raw.githubusercontent.com/ServiceStack/llms/refs/heads/main/llms.py
-    """
-    url = "https://raw.githubusercontent.com/ServiceStack/llms/refs/heads/main/llms.py"
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as resp:
-            resp.raise_for_status()
-            llms_py = await resp.text()
-            with open(__file__, "w") as f:
-                f.write(llms_py)
+    Update llms.py from GitHub
+    """    
+    await save_text(github_url("llms.py"), __file__)
 
-def print_status():
+def provider_status():
     enabled = list(g_handlers.keys())
     disabled = [provider for provider in g_config['providers'].keys() if provider not in enabled]
-
     enabled.sort()
     disabled.sort()
+    return enabled, disabled
+
+def print_status():
+    enabled, disabled = provider_status()
     if len(enabled) > 0:
         print(f"\nEnabled: {', '.join(enabled)}")
     else:
@@ -589,8 +748,167 @@ def print_status():
     else:
         print("Disabled: None")
 
+def home_llms_path(filename):
+    return f"{os.environ.get('HOME')}/.llms/{filename}"
+
+def get_config_path():
+    home_config_path = home_llms_path("llms.json")
+    check_paths = [
+        "./llms.json",
+        home_config_path,
+    ]
+    if os.environ.get("LLMS_CONFIG_PATH"):
+        check_paths.insert(0, os.environ.get("LLMS_CONFIG_PATH"))
+
+    for check_path in check_paths:
+        g_config_path = os.path.normpath(os.path.join(os.path.dirname(__file__), check_path))
+        if os.path.exists(g_config_path):
+            return g_config_path
+    return None
+
+def get_ui_path():
+    ui_paths = [
+        home_llms_path("ui.json"),
+        "ui.json"
+    ]
+    for ui_path in ui_paths:
+        if os.path.exists(ui_path):
+            return ui_path
+    return None
+
+def enable_provider(provider):
+    msg = None
+    provider_config = g_config['providers'][provider]
+    provider_config['enabled'] = True
+    if 'api_key' in provider_config:
+        api_key = provider_config['api_key']
+        if isinstance(api_key, str):
+            if api_key.startswith("$"):
+                if not os.environ.get(api_key[1:], ""):
+                    msg = f"WARNING: {provider} requires missing API Key in Environment Variable {api_key}"
+            else:
+                msg = f"WARNING: {provider} is not configured with an API Key"
+    save_config(g_config)
+    init_llms(g_config)
+    return provider_config, msg
+
+def disable_provider(provider):
+    provider_config = g_config['providers'][provider]
+    provider_config['enabled'] = False
+    save_config(g_config)
+    init_llms(g_config)
+
+def resolve_root():
+    # Try to find the resource root directory
+    # When installed as a package, static files may be in different locations
+
+    # Method 1: Try importlib.resources for package data (Python 3.9+)
+    try:
+        try:
+            # Try to access the package resources
+            pkg_files = resources.files("llms")
+            # Check if ui directory exists in package resources
+            if hasattr(pkg_files, 'is_dir') and (pkg_files / "ui").is_dir():
+                _log(f"RESOURCE ROOT (package): {pkg_files}")
+                return pkg_files
+        except (FileNotFoundError, AttributeError, TypeError):
+            # Package doesn't have the resources, try other methods
+            pass
+    except ImportError:
+        # importlib.resources not available (Python < 3.9)
+        pass
+
+    # Method 2: Try to find data files in sys.prefix (where data_files are installed)
+    # Get all possible installation directories
+    possible_roots = [
+        Path(sys.prefix),  # Standard installation
+        Path(sys.prefix) / "share",  # Some distributions
+        Path(sys.base_prefix),  # Virtual environments
+        Path(sys.base_prefix) / "share",
+    ]
+
+    # Add site-packages directories
+    for site_dir in site.getsitepackages():
+        possible_roots.extend([
+            Path(site_dir),
+            Path(site_dir).parent,
+            Path(site_dir).parent / "share",
+        ])
+
+    # Add user site directory
+    try:
+        user_site = site.getusersitepackages()
+        if user_site:
+            possible_roots.extend([
+                Path(user_site),
+                Path(user_site).parent,
+                Path(user_site).parent / "share",
+            ])
+    except AttributeError:
+        pass
+
+    for root in possible_roots:
+        try:
+            if root.exists() and (root / "index.html").exists() and (root / "ui").is_dir():
+                _log(f"RESOURCE ROOT (data files): {root}")
+                return root
+        except (OSError, PermissionError):
+            continue
+
+    # Method 3: Development mode - look relative to this file
+    # __file__ is *this* module; look in same directory first, then parent
+    dev_roots = [
+        Path(__file__).resolve().parent,  # Same directory as llms.py
+        Path(__file__).resolve().parent.parent,  # Parent directory (repo root)
+    ]
+
+    for root in dev_roots:
+        try:
+            if (root / "index.html").exists() and (root / "ui").is_dir():
+                _log(f"RESOURCE ROOT (development): {root}")
+                return root
+        except (OSError, PermissionError):
+            continue
+
+    # Fallback: use the directory containing this file
+    from_file = Path(__file__).resolve().parent
+    _log(f"RESOURCE ROOT (fallback): {from_file}")
+    return from_file
+
+def resource_exists(resource_path):
+    # Check if resource files exist (handle both Path and Traversable objects)
+    try:
+        if hasattr(resource_path, 'is_file'):
+            return resource_path.is_file()
+        else:
+            return os.path.exists(resource_path)
+    except (OSError, AttributeError):
+        pass
+
+def read_resource_text(resource_path):
+    if hasattr(resource_path, 'read_text'):
+        return resource_path.read_text()
+    else:
+        with open(resource_path, "r") as f:
+            return f.read()
+
+def read_resource_file_bytes(resource_file):
+    try:
+        if hasattr(_ROOT, 'joinpath'):
+            # importlib.resources Traversable
+            index_resource = _ROOT.joinpath(resource_file)
+            if index_resource.is_file():
+                return index_resource.read_bytes()
+        else:
+            # Regular Path object
+            index_path = _ROOT / resource_file
+            if index_path.exists():
+                return index_path.read_bytes()
+    except (OSError, PermissionError, AttributeError) as e:
+        _log(f"Error reading resource bytes: {e}")
+
 def main():
-    global g_verbose, g_default_model, g_logprefix, g_config_path
+    global _ROOT, g_verbose, g_default_model, g_logprefix, g_config_path, g_ui_path
 
     parser = argparse.ArgumentParser(description=f"llms v{VERSION}")
     parser.add_argument('--config',       default=None, help='Path to config file', metavar='FILE')
@@ -600,6 +918,7 @@ def main():
     parser.add_argument('-s', '--system', default=None, help='System prompt to use for chat completion', metavar='PROMPT')
     parser.add_argument('--image',        default=None, help='Image input to use in chat completion')
     parser.add_argument('--audio',        default=None, help='Audio input to use in chat completion')
+    parser.add_argument('--file',         default=None, help='File input to use in chat completion')
     parser.add_argument('--raw',          action='store_true', help='Return raw AI JSON response')
 
     parser.add_argument('--list',         action='store_true', help='Show list of enabled providers and their models (alias ls provider?)')
@@ -612,6 +931,7 @@ def main():
 
     parser.add_argument('--init',         action='store_true', help='Create a default llms.json')
 
+    parser.add_argument('--root',         default=None, help='Change root directory for UI files', metavar='PATH')
     parser.add_argument('--logprefix',    default="",   help='Prefix used in log messages', metavar='PREFIX')
     parser.add_argument('--verbose',      action='store_true', help='Verbose output')
     parser.add_argument('--update',       action='store_true', help='Update to latest version')
@@ -628,35 +948,67 @@ def main():
     if cli_args.config is not None:
         g_config_path = os.path.join(os.path.dirname(__file__), cli_args.config)
 
-    config_path = cli_args.config
-    if config_path:
-        g_config_path = os.path.join(os.path.dirname(__file__), config_path)
-    else:
-        home_config_path = f"{os.environ.get('HOME')}/.llms/llms.json"
-        check_paths = [
-            "./llms.json",
-            home_config_path,
-        ]
-        if os.environ.get("LLMS_CONFIG_PATH"):
-            check_paths.insert(0, os.environ.get("LLMS_CONFIG_PATH"))
+    _ROOT = resolve_root()
+    if cli_args.root:
+        _ROOT = Path(cli_args.root)
 
-        for check_path in check_paths:
-            g_config_path = os.path.join(os.path.dirname(__file__), check_path)
-            if os.path.exists(g_config_path):
-                break
+    if not _ROOT:
+        print("Resource root not found")
+        exit(1)
+
+    g_config_path = os.path.join(os.path.dirname(__file__), cli_args.config) if cli_args.config else get_config_path()
+    g_ui_path = get_ui_path()
+
+    home_config_path = home_llms_path("llms.json")
+    resource_config_path = _ROOT / "llms.json"
+    home_ui_path = home_llms_path("ui.json")
+    resource_ui_path = _ROOT / "ui.json"
 
     if cli_args.init:
-        if os.path.exists(g_config_path):
-            print(f"llms.json already exists at {g_config_path}")
-            exit(1)
-        save_config_path = g_config_path or home_config_path
-        asyncio.run(save_default_config(save_config_path))
-        print(f"Created default config at {save_config_path}")
+        if os.path.exists(home_config_path):
+            print(f"llms.json already exists at {home_config_path}")
+        else:
+            asyncio.run(save_default_config(home_config_path))
+            print(f"Created default config at {home_config_path}")
+
+        if os.path.exists(home_ui_path):
+            print(f"ui.json already exists at {home_ui_path}")
+        else:
+            asyncio.run(save_text(github_url("ui.json"), home_ui_path))
+            print(f"Created default ui config at {home_ui_path}")
         exit(0)
 
-    if not os.path.exists(g_config_path):
-        print("Config file not found. Create one with --init or use --config <path>")
-        exit(1)
+    if not g_config_path or not os.path.exists(g_config_path):
+        # copy llms.json and ui.json to llms_home
+ 
+        if not os.path.exists(home_config_path) and resource_exists(resource_config_path):
+            llms_home = os.path.dirname(home_config_path)
+            os.makedirs(llms_home, exist_ok=True)
+
+            # Read config from resource (handle both Path and Traversable objects)
+            try:
+                config_json = read_resource_text(resource_config_path)
+                with open(home_config_path, "w") as f:
+                    f.write(config_json)
+                    _log(f"Created default config at {home_config_path}")
+            except (OSError, AttributeError) as e:
+                _log(f"Error reading resource config: {e}")
+
+            # Read UI config from resource
+            if not os.path.exists(home_ui_path) and resource_exists(resource_ui_path):
+                try:
+                    ui_json = read_resource_text(resource_ui_path)
+                    with open(home_ui_path, "w") as f:
+                        f.write(ui_json)
+                        _log(f"Created default ui config at {home_ui_path}")
+                except (OSError, AttributeError) as e:
+                    _log(f"Error reading resource ui config: {e}")
+
+            # Update g_config_path to point to the copied file
+            g_config_path = home_config_path
+        else:
+            print("Config file not found. Create one with --init or use --config <path>")
+            exit(1)
 
     # read contents
     with open(g_config_path, "r") as f:
@@ -692,6 +1044,8 @@ def main():
     if cli_args.serve is not None:
         port = int(cli_args.serve)
 
+        app = web.Application()
+
         async def chat_handler(request):
             try:
                 chat = await request.json()
@@ -699,9 +1053,101 @@ def main():
                 return web.json_response(response)
             except Exception as e:
                 return web.json_response({"error": str(e)}, status=500)
-
-        app = web.Application()
         app.router.add_post('/v1/chat/completions', chat_handler)
+
+        async def models_handler(request):
+            return web.json_response(get_models())
+        app.router.add_get('/models', models_handler)
+
+        async def status_handler(request):
+            enabled, disabled = provider_status()
+            return web.json_response({
+                "all": list(g_config['providers'].keys()),
+                "enabled": enabled,
+                "disabled": disabled,
+            })
+        app.router.add_get('/status', status_handler)
+
+        async def provider_handler(request):
+            provider = request.match_info.get('provider', "")
+            data = await request.json()
+            msg = None
+            if provider:                
+                if data.get('enable', False):
+                    provider_config, msg = enable_provider(provider)
+                    _log(f"Enabled provider {provider}")
+                    await load_llms()
+                elif data.get('disable', False):
+                    disable_provider(provider)
+                    _log(f"Disabled provider {provider}")
+            enabled, disabled = provider_status()
+            return web.json_response({
+                "enabled": enabled,
+                "disabled": disabled,
+                "feedback": msg or "",
+            })
+        app.router.add_post('/providers/{provider}', provider_handler)
+
+        async def ui_static(request: web.Request) -> web.Response:
+            path = Path(request.match_info["path"])
+
+            try:
+                # Handle both Path objects and importlib.resources Traversable objects
+                if hasattr(_ROOT, 'joinpath'):
+                    # importlib.resources Traversable
+                    resource = _ROOT.joinpath("ui").joinpath(str(path))
+                    if not resource.is_file():
+                        raise web.HTTPNotFound
+                    content = resource.read_bytes()
+                else:
+                    # Regular Path object
+                    resource = _ROOT / "ui" / path
+                    if not resource.is_file():
+                        raise web.HTTPNotFound
+                    try:
+                        resource.relative_to(Path(_ROOT))  # basic directory-traversal guard
+                    except ValueError:
+                        raise web.HTTPBadRequest(text="Invalid path")
+                    content = resource.read_bytes()
+
+                content_type, _ = mimetypes.guess_type(str(path))
+                if content_type is None:
+                    content_type = "application/octet-stream"
+                return web.Response(body=content, content_type=content_type)
+            except (OSError, PermissionError, AttributeError):
+                raise web.HTTPNotFound
+
+        app.router.add_get("/ui/{path:.*}", ui_static, name="ui_static")
+
+        async def not_found_handler(request):
+            return web.Response(text="404: Not Found", status=404)
+        app.router.add_get('/favicon.ico', not_found_handler)
+
+        # Serve index.html from root
+        async def index_handler(request):
+            index_content = read_resource_file_bytes("index.html")
+            if index_content is None:
+                raise web.HTTPNotFound
+            return web.Response(body=index_content, content_type='text/html')
+        app.router.add_get('/', index_handler)
+
+        # Serve index.html as fallback route (SPA routing)
+        app.router.add_route('*', '/{tail:.*}', index_handler)
+        
+        if os.path.exists(g_ui_path):
+            async def ui_json_handler(request):
+                with open(g_ui_path, "r") as f:
+                    ui = json.load(f)
+                    if 'defaults' not in ui:
+                        ui['defaults'] = g_config['defaults']
+                    enabled, disabled = provider_status()
+                    ui['status'] = {
+                        "all": list(g_config['providers'].keys()),
+                        "enabled": enabled, 
+                        "disabled": disabled 
+                    }
+                    return web.json_response(ui)
+            app.router.add_get('/ui.json', ui_json_handler)
 
         print(f"Starting server on port {port}...")
         web.run_app(app, host='0.0.0.0', port=port)
@@ -712,24 +1158,29 @@ def main():
             cli_args.enable = cli_args.enable[:-1].strip()
         enable_providers = [cli_args.enable]
         all_providers = g_config['providers'].keys()
+        msgs = []
         if len(extra_args) > 0:
             for arg in extra_args:
                 if arg.endswith(','):
                     arg = arg[:-1].strip()
                 if arg in all_providers:
                     enable_providers.append(arg)
+
         for provider in enable_providers:
             if provider not in g_config['providers']:
                 print(f"Provider {provider} not found")
                 print(f"Available providers: {', '.join(g_config['providers'].keys())}")
                 exit(1)
             if provider in g_config['providers']:
-                g_config['providers'][provider]['enabled'] = True
-                save_config(g_config)
-                init_llms(g_config)
+                provider_config, msg = enable_provider(provider)
                 print(f"\nEnabled provider {provider}:")
-                printdump(g_config['providers'][provider])
+                printdump(provider_config)
+                if msg:
+                    msgs.append(msg)
+
         print_status()
+        if len(msgs) > 0:
+            print("\n" + "\n".join(msgs))
         exit(0)
 
     if cli_args.disable is not None:
@@ -743,17 +1194,15 @@ def main():
                     arg = arg[:-1].strip()
                 if arg in all_providers:
                     disable_providers.append(arg)
+
         for provider in disable_providers:
             if provider not in g_config['providers']:
                 print(f"Provider {provider} not found")
                 print(f"Available providers: {', '.join(g_config['providers'].keys())}")
                 exit(1)
-            if provider in g_config['providers']:
-                g_config['providers'][provider]['enabled'] = False
-                save_config(g_config)
-                init_llms(g_config)
-                print(f"\nDisabled provider {provider}")
-                printdump(g_config['providers'][provider])
+            disable_provider(provider)
+            print(f"\nDisabled provider {provider}")
+
         print_status()
         exit(0)
 
@@ -775,13 +1224,15 @@ def main():
         print(f"{__file__} updated")
         exit(0)
 
-    if cli_args.chat is not None or cli_args.image is not None or cli_args.audio is not None or len(extra_args) > 0:
+    if cli_args.chat is not None or cli_args.image is not None or cli_args.audio is not None or cli_args.file is not None or len(extra_args) > 0:
         try:
             chat = g_config['defaults']['text']
             if cli_args.image is not None:
                 chat = g_config['defaults']['image']
             elif cli_args.audio is not None:
                 chat = g_config['defaults']['audio']
+            elif cli_args.file is not None:
+                chat = g_config['defaults']['file']
             if cli_args.chat is not None:
                 chat_path = os.path.join(os.path.dirname(__file__), cli_args.chat)
                 if not os.path.exists(chat_path):
@@ -805,7 +1256,7 @@ def main():
                 else:
                     chat['messages'].append({'role': 'user', 'content': prompt})
 
-            asyncio.run(cli_chat(chat, image=cli_args.image, audio=cli_args.audio, raw=cli_args.raw))
+            asyncio.run(cli_chat(chat, image=cli_args.image, audio=cli_args.audio, file=cli_args.file, raw=cli_args.raw))
             exit(0)
         except Exception as e:
             print(f"{cli_args.logprefix}Error: {e}")
